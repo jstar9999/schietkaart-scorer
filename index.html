@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14213d">
+<title>Schietkaart Scorer – KKG 12 m liggend</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <h1>Schietkaart Scorer</h1>
+  <p>KKG 12 m liggend · KNSA 12-meter schijf model 1986</p>
+</header>
+
+<main>
+  <section class="panel" id="uploadPanel">
+    <div class="step">
+      <div class="step-title"><span class="num">1</span> Kies de reeks</div>
+      <div class="seg">
+        <button type="button" data-series="12x5"><b>12 × 5</b><small>12 grote kaarten, 5 visuelen</small></button>
+        <button type="button" data-series="60x1"><b>60 × 1</b><small>60 kleine kaarten, 1 visueel</small></button>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-title"><span class="num">2</span> Voeg foto's toe</div>
+      <div class="row">
+        <label class="btn primary big">📷 Foto maken<input type="file" id="pickCamera" accept="image/*" capture="environment" hidden></label>
+        <label class="btn big">🖼 Foto's kiezen<input type="file" id="pickFiles" accept="image/*" multiple hidden></label>
+      </div>
+      <div id="drop" class="drop">of sleep foto's hierheen</div>
+      <div id="progress" class="progress hidden"></div>
+    </div>
+    <details class="tips">
+      <summary>Tips voor een goede foto</summary>
+      <ul>
+        <li>Leg de kaart op een <b>gekleurde ondergrond</b> (bijv. groen of rood papier), of houd hem <b>tegen het licht</b>. Op een donkere ondergrond zijn gaten in het zwart onzichtbaar.</li>
+        <li>Fotografeer van boven, kaart groot in beeld. Scheef of gedraaid is geen probleem: de app zet de kaart zelf rechtop.</li>
+        <li>Kleine kaarten: leg er meerdere naast elkaar <b>in volgorde</b> (rijen van links naar rechts) en maak één foto.</li>
+        <li>Zorg voor gelijkmatig licht zonder schaduw van je telefoon of hand.</li>
+      </ul>
+    </details>
+    <details class="tips">
+      <summary>Instellingen</summary>
+      <label class="gauge">Naam schutter <input type="text" id="shooter" class="wide" placeholder="voor het rapport" autocomplete="name"></label><br>
+      <label class="gauge">Schotmaat Ø <input type="number" id="gauge" min="4" max="8" step="0.05" value="5.6"> mm (.22 LR = 5,6)</label>
+    </details>
+  </section>
+
+  <section class="panel hidden" id="summary"></section>
+  <section id="cards"></section>
+</main>
+
+<div id="editor" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="edTitle">
+  <div class="ed-box">
+    <div class="ed-head">
+      <button class="icon" id="edPrev" title="Vorig visueel">‹</button>
+      <h2 id="edTitle"></h2>
+      <button class="icon" id="edNext" title="Volgend visueel">›</button>
+      <button class="btn small" id="edClose">Sluiten</button>
+    </div>
+    <div class="ed-main">
+      <div class="ed-canvas-wrap"><canvas id="edCanvas"></canvas></div>
+      <div class="ed-side">
+        <div id="edInfo" class="ed-info"></div>
+        <div class="ed-tools">
+          <div class="grp">
+            <button class="btn small" id="edZoomOut" title="Uitzoomen">−</button>
+            <button class="btn small" id="edZoomIn" title="Inzoomen">+</button>
+          </div>
+          <div class="grp nudge">
+            <button class="btn small" data-nudge="0,-1" title="Omhoog">↑</button>
+            <button class="btn small" data-nudge="-1,0" title="Links">←</button>
+            <button class="btn small" data-nudge="1,0" title="Rechts">→</button>
+            <button class="btn small" data-nudge="0,1" title="Omlaag">↓</button>
+          </div>
+          <div class="grp">
+            <button class="btn small" id="edAdd">+ schot</button>
+            <button class="btn small" id="edDel">Verwijder schot</button>
+            <button class="btn small" id="edReset">Automatisch</button>
+          </div>
+          <button class="btn primary" id="edOk">✓ Akkoord, volgende</button>
+        </div>
+        <p class="ed-help">Klopt de cirkel niet precies met het kogelgat? Sleep hem op zijn plek, of tik op het gat.
+          Pijltjes verschuiven 0,05 mm. Een verplaatst schot telt als gecontroleerd.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/imgproc.js"></script>
+<script src="js/target.js"></script>
+<script src="js/detect.js"></script>
+<script src="js/report.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

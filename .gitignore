@@ -1,0 +1,11 @@
+# Ondertekensleutel en wachtwoord: nooit publiceren
+android/keystore/
+
+# Bouwresultaten (APK gaat als release-bestand online, niet in de repository)
+android/build/
+android/dist/
+
+# Testuitvoer
+test/e2e.html
+test/*.png
+test/*.pdf

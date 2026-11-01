@@ -1,0 +1,1 @@
+Eerste online versie: automatisch draaien, grote en kleine kaarten, reeks 12×5 of 60×1, zekerheid per schot (markering onder 90%), rapport (PDF) en CSV, en updatemelding bij nieuwe versies.

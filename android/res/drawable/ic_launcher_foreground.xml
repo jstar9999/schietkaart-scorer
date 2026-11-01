@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Schietschijf: papier, ringlijn, zwart met witte ringen, 10-punt en een schot. Veilige zone r=33 rond (54,54). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#F6F4EE"
+        android:pathData="M23,54a31,31 0 1,0 62,0a31,31 0 1,0 -62,0Z" />
+    <path android:strokeColor="#111111" android:strokeWidth="1.2"
+        android:pathData="M28,54a26,26 0 1,0 52,0a26,26 0 1,0 -52,0Z" />
+    <path android:fillColor="#111111"
+        android:pathData="M35,54a19,19 0 1,0 38,0a19,19 0 1,0 -38,0Z" />
+    <path android:strokeColor="#F6F4EE" android:strokeWidth="1"
+        android:pathData="M41,54a13,13 0 1,0 26,0a13,13 0 1,0 -26,0Z" />
+    <path android:strokeColor="#F6F4EE" android:strokeWidth="1"
+        android:pathData="M47,54a7,7 0 1,0 14,0a7,7 0 1,0 -14,0Z" />
+    <path android:fillColor="#F6F4EE"
+        android:pathData="M52.2,54a1.8,1.8 0 1,0 3.6,0a1.8,1.8 0 1,0 -3.6,0Z" />
+    <path android:fillColor="#FCA311" android:strokeColor="#F6F4EE" android:strokeWidth="0.8"
+        android:pathData="M56,47.5a4.5,4.5 0 1,0 9,0a4.5,4.5 0 1,0 -9,0Z" />
+</vector>
