@@ -68,20 +68,52 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) Api33.registerBack(this);
 
         // Updates binnen de app: nieuwste (gecontroleerde) web-versie laden; start die niet binnen 15 s, dan terug.
-        updater = new Updater(this, this::notifyNativeUpdate);
+        updater = new Updater(this, new Updater.Listener() {
+            @Override
+            public void onNativeUpdateReady() { notifyNativeUpdate(); }
+
+            @Override
+            public void onWebUpdateReady() { tryApplyWebUpdate(); }
+
+            @Override
+            public void onCheckDone() { refreshVersionInfo(); }
+        });
         IntentFilter f = new IntentFilter(Updater.ACTION_INSTALL_STATUS);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(installReceiver, f, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(installReceiver, f);
-        web.loadUrl(updater.startUrl());
-        if (updater.needsStartCheck()) web.postDelayed(() -> { if (!appReady) web.loadUrl(updater.rejectLoaded()); }, 15000);
+        loadStartPage();
         updater.check();
+    }
+
+    /** Laadt de nieuwste goedgekeurde web-versie, met terugval als die niet binnen 15 s opstart. */
+    private void loadStartPage() {
+        appReady = false;
+        final String url = updater.startUrl();
+        web.loadUrl(url);
+        if (updater.needsStartCheck()) {
+            web.postDelayed(() -> { if (!appReady && url.equals(web.getUrl())) web.loadUrl(updater.rejectLoaded()); }, 15000);
+        }
+    }
+
+    /* Gedownloade web-update meteen actief maken als dat veilig kan: app op de voorgrond, niet net weg voor camera
+       e.d., en de pagina zegt dat er niets bezig is (prepareReload bewaart eerst de serie). Anders bij de volgende kans. */
+    private void tryApplyWebUpdate() {
+        if (!resumed || away || !appReady || pendingChooser != null || !updater.webUpdatePending()) return;
+        web.evaluateJavascript("(window.KS&&KS.app&&KS.app.prepareReload)?KS.app.prepareReload():false", v -> {
+            if ("true".equals(v) && resumed && updater.webUpdatePending()) loadStartPage();
+        });
+    }
+
+    private void refreshVersionInfo() {
+        if (appReady) web.evaluateJavascript("window.KS&&KS.app&&KS.app.refreshVersionInfo&&KS.app.refreshVersionInfo()", null);
     }
 
     // ------------------------------------------------------------------ updates
 
     private Updater updater;
     private boolean appReady;      // pagina heeft zich gemeld (AndroidBridge.appReady)
-    private boolean away;          // even weg voor camera, galerij, delen of printen: dan niet installeren
+    private boolean away;          // even weg voor camera, galerij, delen of printen: dan niet installeren/verversen
+    private boolean resumed;       // activiteit op de voorgrond
 
     private final BroadcastReceiver installReceiver = new BroadcastReceiver() {
         @Override
@@ -277,6 +309,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        resumed = false;
         // Laatste wijzigingen bewaren voordat de app naar de achtergrond gaat.
         web.evaluateJavascript("window.KS&&KS.app&&KS.app.flushSave&&KS.app.flushSave()", null);
         web.onPause();
@@ -286,8 +319,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        boolean wasAway = away;
         away = false;
+        resumed = true;
         web.onResume();
+        // Terug in de app (niet van camera e.d.): klaarstaande update toepassen en opnieuw controleren.
+        if (!wasAway && updater != null) {
+            tryApplyWebUpdate();
+            if (updater.checkDue()) updater.check();
+        }
     }
 
     @Override
@@ -323,6 +363,7 @@ public class MainActivity extends Activity {
                 appReady = true;
                 updater.confirmLoaded();
                 notifyNativeUpdate();
+                tryApplyWebUpdate();
             });
         }
 
@@ -341,6 +382,7 @@ public class MainActivity extends Activity {
                 o.put("pendingWeb", updater.pendingWebVersion());
                 o.put("app", updater.nativeVersionName());
                 o.put("pendingApp", updater.nativeUpdateName());
+                o.put("status", updater.status());
                 return o.toString();
             } catch (Exception e) {
                 return "{}";

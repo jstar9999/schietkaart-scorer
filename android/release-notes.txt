@@ -1,1 +1,1 @@
-﻿Versienummer zichtbaar in de kop van de app (test van de stille update binnen de app).
+﻿Updates worden meteen actief zodra je de app opent of terugkomt (geen dubbele herstart meer). Status van de laatste updatecontrole onder Instellingen.

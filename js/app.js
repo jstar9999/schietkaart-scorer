@@ -1300,8 +1300,18 @@
       var v = JSON.parse(AndroidBridge.versionInfo());
       $('appVersion').textContent = ' · v' + v.web;
       box.textContent = 'Versie ' + v.web + (v.app && v.app !== v.web ? ' (app ' + v.app + ')' : '') +
-        (v.pendingWeb ? ' · update ' + v.pendingWeb + ' wordt bij de volgende start actief' : '') + '. Updates gaan automatisch.';
+        (v.pendingWeb ? ' · update ' + v.pendingWeb + ' staat klaar' : '') + '. Updates gaan automatisch.' +
+        (v.status ? ' Laatste controle: ' + v.status + '.' : '');
     } catch (e) { /* geen info */ }
+  }
+
+  /* Android vraagt dit voordat een gedownloade update actief wordt. Alleen als er niets bezig is: dan eerst
+     bewaren (op Android synchroon) en ja zeggen; de pagina wordt daarna in de nieuwe versie geladen. */
+  function prepareReload() {
+    var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (state.busy || state.queue.length || state.restoring || ed || typing || !$('shotSheet').classList.contains('hidden')) return false;
+    flushSave();
+    return true;
   }
 
   // Aangeroepen door Android als een nieuwe app-schil gedownload en gecontroleerd is (zelden nodig).
@@ -1314,7 +1324,8 @@
   KS.app = {
     state: state, enqueue: enqueue, openEditor: openEditor, closeEditor: closeEditor, renderAll: renderAll, resultText: resultText,
     rotateCard: rotateCard, reportData: reportData, csvText: csvText, makeReport: makeReport,
-    flushSave: flushSave, newSession: newSession, openSession: openSession, nativeUpdateReady: nativeUpdateReady
+    flushSave: flushSave, newSession: newSession, openSession: openSession, nativeUpdateReady: nativeUpdateReady,
+    prepareReload: prepareReload, refreshVersionInfo: showVersionInfo
   };
   init();
 })();

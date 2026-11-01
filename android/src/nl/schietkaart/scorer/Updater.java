@@ -43,7 +43,13 @@ final class Updater {
 
     interface Listener {
         void onNativeUpdateReady();
+
+        void onWebUpdateReady();
+
+        void onCheckDone();
     }
+
+    private static final long CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
     private final Activity act;
     private final SharedPreferences prefs;
@@ -52,6 +58,9 @@ final class Updater {
     private volatile File nativeApk;          // gecontroleerde APK-update, klaar om te installeren
     private volatile String nativeName = "";
     private boolean installing;
+    private volatile boolean checking;
+    private volatile long lastCheck;
+    private volatile String status = "";      // laatste resultaat, zichtbaar onder Instellingen
 
     Updater(Activity a, Listener l) {
         act = a;
@@ -116,60 +125,79 @@ final class Updater {
 
     // ------------------------------------------------------------------ controleren en downloaden
 
+    String status() { return status; }
+
+    /** Controleren mag bij opstarten en bij terugkomen in de app, maar hooguit eens per 5 minuten. */
+    boolean checkDue() { return !checking && System.currentTimeMillis() - lastCheck > CHECK_INTERVAL_MS; }
+
     void check() {
         final String url = readAsset("update-url.txt");
-        if (url == null || !url.startsWith("https://")) return;
+        if (url == null || !url.startsWith("https://") || checking) return;
         int i = url.indexOf("/releases/");
         if (i < 0) return;
         final String prefix = url.substring(0, i + "/releases/".length());
+        checking = true;
+        lastCheck = System.currentTimeMillis();
         new Thread(() -> {
+            String result;
             try {
                 JSONObject v = new JSONObject(new String(httpGet(url), StandardCharsets.UTF_8));
                 long current = currentVersionCode();
                 JSONObject w = v.optJSONObject("web");
-                if (w != null) updateWeb(w, prefix, current);
+                result = w != null ? updateWeb(w, prefix, current) : "geen web-versie in version.json";
                 long latest = v.optLong("versionCode", 0);
                 String apk = v.optString("apk", "");
                 if (latest > current && apk.startsWith(prefix)) {
-                    downloadNative(apk, v.optString("apkSha256", ""), v.optString("versionName", ""), current);
+                    result = downloadNative(apk, v.optString("apkSha256", ""), v.optString("versionName", ""), current);
                 }
-            } catch (Exception ignored) {
-                // geen internet of geen versiebestand: gewoon doorgaan
+            } catch (Exception e) {
+                result = "fout: " + e.getClass().getSimpleName() + (e.getMessage() == null ? "" : " " + e.getMessage());
             }
+            status = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT).format(new java.util.Date()) + " – " + result;
+            checking = false;
+            act.runOnUiThread(listener::onCheckDone);
         }, "updates").start();
     }
 
-    private void updateWeb(JSONObject w, String prefix, long nativeCode) throws Exception {
+    private String updateWeb(JSONObject w, String prefix, long nativeCode) throws Exception {
         String ver = w.optString("version", ""), url = w.optString("url", ""), sha = w.optString("sha256", "");
-        if (!ver.matches("[0-9A-Za-z._-]{1,40}") || !url.startsWith(prefix) || sha.isEmpty()) return;
-        if (w.optLong("minNative", 0) > nativeCode) return;          // vraagt eerst een nieuwere Android-schil
+        if (!ver.matches("[0-9A-Za-z._-]{1,40}") || !url.startsWith(prefix) || sha.isEmpty()) return "ongeldige web-versie";
+        if (w.optLong("minNative", 0) > nativeCode) return "nieuwe versie " + ver + " vraagt eerst een app-update";
         String newest = loadedWebVersion(), active = prefs.getString(P_ACTIVE, "");
         if (active.compareTo(newest) > 0) newest = active;
-        if (ver.compareTo(newest) <= 0 || ver.equals(prefs.getString(P_BAD, ""))) return;
+        if (ver.equals(prefs.getString(P_BAD, ""))) return "versie " + ver + " overgeslagen (startte niet)";
+        if (ver.compareTo(newest) <= 0) return active.compareTo(loadedWebVersion()) > 0 ? "versie " + active + " staat klaar" : "up-to-date";
 
         File zip = new File(act.getCacheDir(), "web-update.zip");
         download(url, zip);
-        if (!sha.equalsIgnoreCase(sha256(zip))) { zip.delete(); return; }
+        if (!sha.equalsIgnoreCase(sha256(zip))) { zip.delete(); return "fout: controle van de download mislukt"; }
         File root = webRoot(), part = new File(root, ver + ".part"), dir = new File(root, ver);
         deleteTree(part);
         unzip(zip, part);
         zip.delete();
-        if (!new File(part, "index.html").isFile()) { deleteTree(part); return; }
+        if (!new File(part, "index.html").isFile()) { deleteTree(part); return "fout: download onvolledig"; }
         deleteTree(dir);
-        if (!part.renameTo(dir)) { deleteTree(part); return; }
-        prefs.edit().putString(P_ACTIVE, ver).apply();               // actief bij de volgende start
+        if (!part.renameTo(dir)) { deleteTree(part); return "fout: opslaan mislukt"; }
+        prefs.edit().putString(P_ACTIVE, ver).commit();
+        act.runOnUiThread(listener::onWebUpdateReady);
+        return "versie " + ver + " gedownload";
     }
 
-    private void downloadNative(String url, String sha, String name, long current) throws Exception {
+    /** Is er een gedownloade web-versie die nieuwer is dan wat nu draait? */
+    boolean webUpdatePending() { return !pendingWebVersion().isEmpty(); }
+
+    private String downloadNative(String url, String sha, String name, long current) throws Exception {
+        if (nativeApk != null && name.equals(nativeName)) return "app-update " + name + " staat klaar";
         File f = new File(act.getCacheDir(), "update.apk");
         download(url, f);
-        if (sha.isEmpty() || !sha.equalsIgnoreCase(sha256(f))) { f.delete(); return; }
+        if (sha.isEmpty() || !sha.equalsIgnoreCase(sha256(f))) { f.delete(); return "fout: controle van de app-update mislukt"; }
         PackageInfo pi = act.getPackageManager().getPackageArchiveInfo(f.getPath(), 0);
         long code = pi == null ? 0 : (Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode);
-        if (pi == null || !act.getPackageName().equals(pi.packageName) || code <= current) { f.delete(); return; }
+        if (pi == null || !act.getPackageName().equals(pi.packageName) || code <= current) { f.delete(); return "fout: app-update ongeldig"; }
         nativeName = name;
         nativeApk = f;
         act.runOnUiThread(listener::onNativeUpdateReady);
+        return "app-update " + name + " klaar om te installeren";
     }
 
     // ------------------------------------------------------------------ installeren (Android-schil)
