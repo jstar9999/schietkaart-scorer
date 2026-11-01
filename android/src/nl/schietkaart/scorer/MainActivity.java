@@ -3,9 +3,12 @@ package nl.schietkaart.scorer;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
@@ -34,8 +37,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /** Toont de web-app (assets/www) in een WebView en koppelt camera, galerij, klembord en delen. */
@@ -65,72 +66,45 @@ public class MainActivity extends Activity {
         edgeToEdge(root);
         configureWebView();
         if (Build.VERSION.SDK_INT >= 33) Api33.registerBack(this);
-        web.loadUrl("file:///android_asset/www/index.html");
-        checkForUpdate();
+
+        // Updates binnen de app: nieuwste (gecontroleerde) web-versie laden; start die niet binnen 15 s, dan terug.
+        updater = new Updater(this, this::notifyNativeUpdate);
+        IntentFilter f = new IntentFilter(Updater.ACTION_INSTALL_STATUS);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(installReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(installReceiver, f);
+        web.loadUrl(updater.startUrl());
+        if (updater.needsStartCheck()) web.postDelayed(() -> { if (!appReady) web.loadUrl(updater.rejectLoaded()); }, 15000);
+        updater.check();
     }
 
     // ------------------------------------------------------------------ updates
 
-    /* Leest assets/update-url.txt (door build.ps1 gezet), haalt version.json op en biedt een nieuwere APK aan.
-       version.json: {"versionCode": 26110113, "versionName": "...", "apk": "https://...", "notes": "..."} */
-    private void checkForUpdate() {
-        final String url = readAsset("update-url.txt");
-        if (url == null || !url.startsWith("https://")) return;
-        new Thread(() -> {
-            try {
-                JSONObject v = new JSONObject(httpGet(url));
-                long latest = v.getLong("versionCode"), current = currentVersionCode();
-                final String apk = v.optString("apk", ""), name = v.optString("versionName", ""), notes = v.optString("notes", "");
-                if (latest <= current || !apk.startsWith("https://")) return;
-                runOnUiThread(() -> {
-                    if (isFinishing()) return;
-                    new AlertDialog.Builder(this)
-                            .setTitle("Nieuwe versie beschikbaar")
-                            .setMessage("Versie " + name + (notes.isEmpty() ? "" : "\n\n" + notes)
-                                    + "\n\nNa het downloaden de APK openen om bij te werken.")
-                            .setPositiveButton("Downloaden", (d, w) -> {
-                                try {
-                                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apk)));
-                                } catch (ActivityNotFoundException e) {
-                                    toast("Geen browser gevonden.");
-                                }
-                            })
-                            .setNegativeButton("Later", null)
-                            .show();
-                });
-            } catch (Exception ignored) {
-                // geen internet of geen versiebestand: gewoon doorgaan
-            }
-        }).start();
-    }
+    private Updater updater;
+    private boolean appReady;      // pagina heeft zich gemeld (AndroidBridge.appReady)
+    private boolean away;          // even weg voor camera, galerij, delen of printen: dan niet installeren
 
-    private long currentVersionCode() throws Exception {
-        android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
-        return Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
-    }
-
-    private String readAsset(String name) {
-        try (InputStream in = getAssets().open(name)) {
-            return readAll(in).trim();
-        } catch (Exception e) {
-            return null;
+    private final BroadcastReceiver installReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            updater.onInstallStatus(i);
         }
+    };
+
+    /** Nieuwe Android-schil gedownload: de pagina toont een kleine "Installeren"-knop. */
+    private void notifyNativeUpdate() {
+        String name = updater.nativeUpdateName();
+        if (!appReady || name.isEmpty()) return;
+        web.evaluateJavascript("window.KS&&KS.app&&KS.app.nativeUpdateReady&&KS.app.nativeUpdateReady(" + JSONObject.quote(name) + ")", null);
     }
 
-    private static String httpGet(String url) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setConnectTimeout(6000);
-        c.setReadTimeout(6000);
-        c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("Cache-Control", "no-cache");
-        try (InputStream in = c.getInputStream()) {
-            return readAll(in);
-        } finally {
-            c.disconnect();
-        }
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // App verlaten (niet voor camera e.d.): een klaarstaande schil-update stil installeren als dat kan.
+        if (!away && updater != null) updater.install(true);
     }
 
-    private static String readAll(InputStream in) throws Exception {
+    static String readAll(InputStream in) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buf = new byte[8192];
         int n;
@@ -231,6 +205,7 @@ public class MainActivity extends Activity {
             i.setType("image/*");
             i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple);
         }
+        away = true;
         startActivityForResult(i, REQ_PICK);
     }
 
@@ -244,6 +219,7 @@ public class MainActivity extends Activity {
         i.putExtra(MediaStore.EXTRA_OUTPUT, uri);
         i.setClipData(ClipData.newRawUri("foto", uri));
         i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        away = true;
         startActivityForResult(i, REQ_CAMERA);
     }
 
@@ -310,11 +286,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        away = false;
         web.onResume();
     }
 
     @Override
     protected void onDestroy() {
+        try {
+            unregisterReceiver(installReceiver);
+        } catch (Exception ignored) {
+            // niet geregistreerd
+        }
         web.destroy();
         super.onDestroy();
     }
@@ -334,6 +316,37 @@ public class MainActivity extends Activity {
 
     /** Aangeroepen vanuit JavaScript als window.AndroidBridge. */
     public class Bridge {
+        /** De pagina is goed opgestart (bevestigt een nieuwe web-versie). */
+        @JavascriptInterface
+        public void appReady() {
+            runOnUiThread(() -> {
+                appReady = true;
+                updater.confirmLoaded();
+                notifyNativeUpdate();
+            });
+        }
+
+        /** Klaarstaande update van de Android-schil installeren (na tik op "Installeren"). */
+        @JavascriptInterface
+        public void installUpdate() {
+            runOnUiThread(() -> updater.install(false));
+        }
+
+        /** Versie-informatie voor Instellingen. */
+        @JavascriptInterface
+        public String versionInfo() {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("web", updater.loadedWebVersion());
+                o.put("pendingWeb", updater.pendingWebVersion());
+                o.put("app", updater.nativeVersionName());
+                o.put("pendingApp", updater.nativeUpdateName());
+                return o.toString();
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
+
         /** Schrijft atomair (eerst .tmp, dan hernoemen) zodat een onderbroken save niets kapotmaakt. */
         @JavascriptInterface
         public boolean storeWrite(String key, String text) {
@@ -391,6 +404,7 @@ public class MainActivity extends Activity {
                                 .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
                                 .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
                                 .build();
+                        away = true;
                         pm.print(name, view.createPrintDocumentAdapter(name), attrs);
                     }
                 });
@@ -416,6 +430,7 @@ public class MainActivity extends Activity {
                     send.putExtra(Intent.EXTRA_SUBJECT, safe);
                     send.setClipData(ClipData.newRawUri(safe, uri));
                     send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    away = true;
                     startActivity(Intent.createChooser(send, "Uitslag delen"));
                 } catch (Exception e) {
                     toast("Delen mislukt: " + e.getMessage());

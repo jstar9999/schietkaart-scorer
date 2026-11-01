@@ -50,6 +50,16 @@ Installeren: zet de APK op je telefoon (USB-kabel, e-mail of Drive), open hem me
 "installeren van onbekende apps" toe. Of via USB-foutopsporing:
 `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe install -r android\dist\SchietkaartScorer.apk`
 
+**Updates binnen de app.** Bij het opstarten kijkt de app naar `version.json` van de laatste GitHub-release:
+- *Web-app* (bijna alle wijzigingen): `www.zip` wordt stil gedownload, met SHA-256 gecontroleerd en bij de
+  volgende start geladen. Geen melding. Start een nieuwe versie niet binnen 15 s op, dan valt de app terug.
+- *Android-schil* (alleen als Java/resources/manifest veranderen; `build.ps1` houdt dat bij in
+  `android\native-version.json`): de APK wordt binnen de app gedownload en via de Android-installer geïnstalleerd.
+  De eerste keer: eenmalig "Apps installeren" toestaan en één bevestiging. Daarna (Android 12+) stil zodra je de
+  app verlaat.
+
+Publiceren: `powershell -ExecutionPolicy Bypass -File publish.ps1 -Notes "wat er nieuw is"`.
+
 Opnieuw bouwen na wijzigingen: `powershell -ExecutionPolicy Bypass -File android\build.ps1`
 (gebruikt JDK 17 en Android SDK in `%LOCALAPPDATA%\Android`). Bewaar `android\keystore\schietkaart.jks`:
 zonder die sleutel kan een nieuwe versie niet over de oude heen geïnstalleerd worden.

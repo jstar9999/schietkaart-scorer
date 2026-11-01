@@ -14,6 +14,10 @@
 </header>
 
 <main>
+  <div id="updateBar" class="update-bar hidden">
+    <span id="updateText">App-update klaar.</span>
+    <button class="btn small primary" id="updateInstall">Installeren</button>
+  </div>
   <section class="panel" id="uploadPanel">
     <div class="step">
       <div class="step-title"><span class="num">1</span> Kies de reeks</div>
@@ -51,6 +55,7 @@
       <summary>Instellingen</summary>
       <label class="gauge">Naam schutter <input type="text" id="shooter" class="wide" placeholder="voor het rapport" autocomplete="name"></label><br>
       <label class="gauge">Schotmaat Ø <input type="number" id="gauge" min="4" max="8" step="0.05" value="5.6"> mm (.22 LR = 5,6)</label>
+      <p id="versionInfo" class="muted small"></p>
     </details>
   </section>
 

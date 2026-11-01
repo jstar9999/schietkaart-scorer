@@ -1,6 +1,7 @@
-# Nieuwe versie publiceren: APK bouwen, code naar GitHub, release met APK + version.json.
+# Nieuwe versie publiceren: bouwen, code naar GitHub, release met APK + www.zip + version.json.
 # Gebruik:  powershell -ExecutionPolicy Bypass -File publish.ps1 -Notes "Wat er nieuw is"
-# Telefoons met de app krijgen daarna bij het opstarten de melding "Nieuwe versie beschikbaar".
+# Telefoons halen www.zip stil op en draaien de nieuwe versie bij de volgende start. Alleen als de Android-schil
+# veranderd is, installeert de app ook een nieuwe APK (binnen de app).
 param([string]$Notes = '')
 $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
@@ -26,6 +27,6 @@ $relNotes = if ($Notes) { $Notes } elseif (Test-Path $notesFile) { (Get-Content 
 # Notities via een bestand: PowerShell 5.1 geeft aanhalingstekens in argumenten niet goed door aan gh.
 $tmpNotes = Join-Path $env:TEMP 'schietkaart-release-notes.txt'
 [IO.File]::WriteAllText($tmpNotes, $relNotes, (New-Object Text.UTF8Encoding $false))
-gh release create $tag (Join-Path $root 'android\dist\SchietkaartScorer.apk') (Join-Path $root 'android\dist\version.json') --title "Schietkaart Scorer $($ver.versionName)" --notes-file $tmpNotes
+gh release create $tag (Join-Path $root 'android\dist\SchietkaartScorer.apk') (Join-Path $root 'android\dist\www.zip') (Join-Path $root 'android\dist\version.json') --title "Schietkaart Scorer $($ver.versionName)" --notes-file $tmpNotes
 if ($LASTEXITCODE -ne 0) { Fail 'GitHub-release maken' }
 Write-Host "Gepubliceerd: $tag  ->  https://github.com/jstar9999/schietkaart-scorer/releases/latest" -ForegroundColor Green

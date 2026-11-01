@@ -129,6 +129,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 12px; }
   .gauge { margin-left: 0; }
 }
 
+/* update van de Android-schil (zelden) */
+.update-bar { display: flex; align-items: center; gap: 10px; background: #eaf1ff; border: 1px solid #c9dafc; color: #1d3f8f;
+  border-radius: var(--radius); padding: 8px 12px; margin-bottom: 12px; font-size: 14px; }
+.update-bar span { flex: 1; }
+
 /* fotoreeks */
 .hint-line { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
 .sheet-box { background: #fff; border-radius: 12px; width: min(560px, 100%); padding: 14px; max-height: 100%; overflow: auto; }

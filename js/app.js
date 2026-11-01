@@ -28,9 +28,25 @@
 
   // ------------------------------------------------------------------ instellingen
 
+  /* Kleine sleutel/waarde-opslag. In de Android-app via bestanden (blijft gelijk als een nieuwe web-versie vanuit
+     een andere map geladen wordt), in de browser via localStorage. */
+  var BR = window.AndroidBridge && window.AndroidBridge.storeRead ? window.AndroidBridge : null;
+  function kvGet(key) {
+    try {
+      if (BR) { var t = BR.storeRead('cfg-' + key); if (t != null) return t; }
+      return localStorage.getItem(LS_KEY + ':' + key);
+    } catch (e) { return null; }
+  }
+  function kvSet(key, val) {
+    try {
+      if (BR) { if (val == null) BR.storeDelete('cfg-' + key); else BR.storeWrite('cfg-' + key, String(val)); }
+      if (val == null) localStorage.removeItem(LS_KEY + ':' + key); else localStorage.setItem(LS_KEY + ':' + key, String(val));
+    } catch (e) { /* geen opslag */ }
+  }
+
   function loadSettings() {
     try {
-      var s = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+      var s = JSON.parse(kvGet('settings') || localStorage.getItem(LS_KEY) || '{}');
       if (s.gauge >= 4 && s.gauge <= 8) state.gauge = s.gauge;
       if (SERIES[s.series]) state.series = s.series;
       if (typeof s.shooter === 'string') state.shooter = s.shooter;
@@ -39,7 +55,7 @@
     $('shooter').value = state.shooter;
     renderSeriesChoice();
   }
-  function saveSettings() { try { localStorage.setItem(LS_KEY, JSON.stringify({ gauge: state.gauge, series: state.series, shooter: state.shooter })); } catch (e) { /* geen opslag */ } }
+  function saveSettings() { kvSet('settings', JSON.stringify({ gauge: state.gauge, series: state.series, shooter: state.shooter })); }
 
   function renderSeriesChoice() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-series]'), function (b) {
@@ -693,7 +709,7 @@
     clearTimeout(saveTimer);
     if (state.restoring || !KS.store || !state.cards.length) return Promise.resolve();
     if (!state.sessionId) state.sessionId = 's' + Date.now();
-    try { localStorage.setItem(LS_KEY + ':current', state.sessionId); } catch (e) { /* geen opslag */ }
+    kvSet('current', state.sessionId);
     return KS.store.save(serializeSession(), sessionMeta()).then(function () {
       state.savedAt = new Date(); state.saveError = null;
       renderSaveStatus(); renderSessions();
@@ -733,7 +749,7 @@
         state.photos = Math.max(state.photos, card.photoNo || 0);
         state.cards.push(card);
       }
-      try { localStorage.setItem(LS_KEY + ':current', sess.id); } catch (e) { /* geen opslag */ }
+      kvSet('current', sess.id);
       renderAll();
     } finally {
       state.restoring = false;
@@ -744,7 +760,7 @@
   function newSession() {
     return flushSave().then(function () {
       state.cards = []; state.photos = 0; state.dateManual = false; state.date = ''; state.sessionId = null; state.savedAt = null;
-      try { localStorage.removeItem(LS_KEY + ':current'); } catch (e) { /* geen opslag */ }
+      kvSet('current', null);
       $('cards').innerHTML = '';
       renderAll(); renderSessions();
       window.scrollTo(0, 0);
@@ -765,7 +781,7 @@
     var cur = id === state.sessionId;
     KS.store.remove(id).then(function () {
       if (cur) { state.sessionId = null; state.cards = []; state.photos = 0; state.dateManual = false; state.date = ''; $('cards').innerHTML = '';
-        try { localStorage.removeItem(LS_KEY + ':current'); } catch (e) { /* geen opslag */ }
+        kvSet('current', null);
         state.restoring = true; renderAll(); state.restoring = false; }
       renderSessions();
     });
@@ -806,7 +822,7 @@
   // Bij het starten de laatste serie terugzetten.
   function restoreLast() {
     var id = null;
-    try { id = localStorage.getItem(LS_KEY + ':current'); } catch (e) { /* geen opslag */ }
+    id = kvGet('current');
     if (!id || !KS.store) { renderSessions(); return Promise.resolve(); }
     return KS.store.load(id).then(function (sess) {
       if (sess && sess.cards && sess.cards.length) return restoreSession(sess);
@@ -1271,12 +1287,33 @@
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushSave(); });
     window.addEventListener('pagehide', function () { flushSave(); });
     KS.app.ready = restoreLast();
+    $('updateInstall').addEventListener('click', function () { if (window.AndroidBridge && AndroidBridge.installUpdate) AndroidBridge.installUpdate(); });
+    showVersionInfo();
+    // Android: melden dat de pagina goed is opgestart (bevestigt een nieuwe, stil bijgewerkte versie).
+    if (window.AndroidBridge && AndroidBridge.appReady) { try { AndroidBridge.appReady(); } catch (e) { /* oude app */ } }
+  }
+
+  function showVersionInfo() {
+    var box = $('versionInfo');
+    if (!box || !window.AndroidBridge || !AndroidBridge.versionInfo) return;
+    try {
+      var v = JSON.parse(AndroidBridge.versionInfo());
+      box.textContent = 'Versie ' + v.web + (v.app && v.app !== v.web ? ' (app ' + v.app + ')' : '') +
+        (v.pendingWeb ? ' · update ' + v.pendingWeb + ' wordt bij de volgende start actief' : '') + '. Updates gaan automatisch.';
+    } catch (e) { /* geen info */ }
+  }
+
+  // Aangeroepen door Android als een nieuwe app-schil gedownload en gecontroleerd is (zelden nodig).
+  function nativeUpdateReady(name) {
+    $('updateText').textContent = 'App-update ' + name + ' is klaar om te installeren.';
+    $('updateBar').classList.remove('hidden');
+    showVersionInfo();
   }
 
   KS.app = {
     state: state, enqueue: enqueue, openEditor: openEditor, closeEditor: closeEditor, renderAll: renderAll, resultText: resultText,
     rotateCard: rotateCard, reportData: reportData, csvText: csvText, makeReport: makeReport,
-    flushSave: flushSave, newSession: newSession, openSession: openSession
+    flushSave: flushSave, newSession: newSession, openSession: openSession, nativeUpdateReady: nativeUpdateReady
   };
   init();
 })();

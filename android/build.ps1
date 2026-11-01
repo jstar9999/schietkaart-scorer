@@ -1,4 +1,5 @@
-# Bouwt android\dist\SchietkaartScorer.apk uit de web-app (index.html, css, js) + de Android-schil.
+# Bouwt android\dist\: SchietkaartScorer.apk (Android-schil + web-app), www.zip (alleen de web-app, voor stille
+# updates binnen de app) en version.json (wat de app bij het opstarten controleert).
 # Gebruik:  powershell -ExecutionPolicy Bypass -File android\build.ps1
 # Vereist (eenmalig geïnstalleerd in %LOCALAPPDATA%\Android): jdk17, Sdk\platforms\android-36, Sdk\build-tools\36.1.0
 $ErrorActionPreference = 'Continue'
@@ -10,14 +11,38 @@ $bt = Join-Path $base 'Sdk\build-tools\36.1.0'
 $androidJar = Join-Path $base 'Sdk\platforms\android-36\android.jar'
 $env:JAVA_HOME = $jdk
 $env:Path = "$jdk\bin;$bt;" + $env:Path
+$utf8 = New-Object Text.UTF8Encoding $false
 
 $minSdk = 26; $targetSdk = 36
-# Versiecode stijgt elke minuut (27.000.000 + minuten sinds 1-1-2026); hoger dan alle eerdere builds.
 $now = Get-Date
-$versionCode = 27000000 + [int][math]::Floor(($now - (Get-Date -Year 2026 -Month 1 -Day 1 -Hour 0 -Minute 0 -Second 0)).TotalMinutes)
-$versionName = $now.ToString('yyyy.MM.dd-HHmm')
+# Versie van deze release (web-app). Bepaalt de stille updates binnen de app.
+$webVersion = $now.ToString('yyyy.MM.dd-HHmm')
 
-# Optioneel: android\update-url.txt = adres van version.json (bijv. GitHub releases/latest/download/version.json)
+# Versiecode van de Android-schil: alleen een nieuwe code als de schil (Java, resources, manifest) echt veranderd
+# is. Anders blijft de code gelijk en krijgen telefoons alleen een stille web-update, zonder installatie.
+function NativeHash {
+    $files = @(Get-ChildItem "$here\src", "$here\res", "$here\tools" -Recurse -File) + @(Get-Item "$here\AndroidManifest.xml")
+    $lines = $files | Sort-Object FullName | ForEach-Object {
+        $_.FullName.Substring($here.Length) + ':' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    -join ($sha.ComputeHash($utf8.GetBytes(($lines -join "`n"))) | ForEach-Object { $_.ToString('x2') })
+}
+$nativeFile = Join-Path $here 'native-version.json'
+$hash = NativeHash
+$nv = if (Test-Path $nativeFile) { Get-Content $nativeFile -Raw | ConvertFrom-Json } else { $null }
+if ($nv -and $nv.hash -eq $hash) {
+    $versionCode = [int]$nv.versionCode
+    Write-Host "Android-schil ongewijzigd (code $versionCode): telefoons krijgen een stille web-update."
+} else {
+    # 27.000.000 + minuten sinds 1-1-2026: hoger dan alle eerdere builds.
+    $versionCode = 27000000 + [int][math]::Floor(($now - (Get-Date -Year 2026 -Month 1 -Day 1 -Hour 0 -Minute 0 -Second 0)).TotalMinutes)
+    $nv = [ordered]@{ hash = $hash; versionCode = $versionCode; versionName = $webVersion }
+    [IO.File]::WriteAllText($nativeFile, ($nv | ConvertTo-Json), $utf8)
+    Write-Host "Android-schil gewijzigd: nieuwe code $versionCode (installatie binnen de app)." -ForegroundColor Yellow
+}
+
+# android\update-url.txt = adres van version.json (GitHub releases/latest/download/version.json)
 $updateFile = Join-Path $here 'update-url.txt'
 $updateUrl = if (Test-Path $updateFile) { (Get-Content $updateFile -Raw).Trim() } else { '' }
 $notesFile = Join-Path $here 'release-notes.txt'
@@ -32,18 +57,31 @@ function Step($name, [scriptblock]$cmd) {
 $build = Join-Path $here 'build'
 $dist = Join-Path $here 'dist'
 if (Test-Path $build) { Remove-Item -Recurse -Force $build }
+if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
 New-Item -ItemType Directory -Force $build, $dist, "$build\assets\www", "$build\classes", "$build\dex", "$build\gen" | Out-Null
 
-# Web-app als assets
-Copy-Item (Join-Path $web 'index.html') "$build\assets\www\"
-Copy-Item (Join-Path $web 'css') "$build\assets\www\" -Recurse
-Copy-Item (Join-Path $web 'js') "$build\assets\www\" -Recurse
-if ($updateUrl) { [IO.File]::WriteAllText("$build\assets\update-url.txt", $updateUrl) }
+# Web-app als assets, met versienummer
+$www = "$build\assets\www"
+Copy-Item (Join-Path $web 'index.html') "$www\"
+Copy-Item (Join-Path $web 'css') "$www\" -Recurse
+Copy-Item (Join-Path $web 'js') "$www\" -Recurse
+[IO.File]::WriteAllText("$www\web-version.txt", $webVersion, $utf8)
+if ($updateUrl) { [IO.File]::WriteAllText("$build\assets\update-url.txt", $updateUrl, $utf8) }
+
+# www.zip (paden met '/', ook op Windows)
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$zipPath = Join-Path $dist 'www.zip'
+$zip = [IO.Compression.ZipFile]::Open($zipPath, 'Create')
+Get-ChildItem $www -Recurse -File | ForEach-Object {
+    $rel = $_.FullName.Substring($www.Length + 1).Replace('\', '/')
+    [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $rel) | Out-Null
+}
+$zip.Dispose()
 
 Step 'resources compileren' { aapt2 compile --dir "$here\res" -o "$build\res.zip" }
 Step 'manifest + resources linken' {
     aapt2 link -o "$build\base.apk" -I $androidJar --manifest "$here\AndroidManifest.xml" `
-        --min-sdk-version $minSdk --target-sdk-version $targetSdk --version-code $versionCode --version-name $versionName `
+        --min-sdk-version $minSdk --target-sdk-version $targetSdk --version-code $versionCode --version-name $webVersion `
         -A "$build\assets" --java "$build\gen" "$build\res.zip"
 }
 $sources = @(Get-ChildItem "$here\src", "$build\gen" -Recurse -Filter *.java | ForEach-Object { $_.FullName })
@@ -72,9 +110,23 @@ Step 'ondertekenen' { apksigner.bat sign --ks $ks --ks-pass "pass:$pass" --key-p
 Step 'controleren' { apksigner.bat verify $apk }
 Remove-Item -Force "$apk.idsig" -ErrorAction SilentlyContinue
 
-# version.json voor de updatecheck in de app (wordt samen met de APK als release gepubliceerd)
-$apkUrl = if ($updateUrl) { $updateUrl -replace '[^/]+$', 'SchietkaartScorer.apk' } else { '' }
-$ver = [ordered]@{ versionCode = $versionCode; versionName = $versionName; apk = $apkUrl; notes = $notes }
-[IO.File]::WriteAllText((Join-Path $dist 'version.json'), ($ver | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+# version.json: de app downloadt www.zip (stil) en, alleen bij een nieuwere schil, de APK (installatie binnen de app).
+# Bestanden staan per release; de app accepteert alleen adressen uit deze repository.
+$releases = if ($updateUrl) { $updateUrl -replace 'latest/download/version\.json$', '' } else { '' }
+$tagBase = if ($releases) { $releases + 'download/v' + $webVersion + '/' } else { '' }
+$ver = [ordered]@{
+    versionCode = $versionCode
+    versionName = $webVersion
+    apk = if ($tagBase) { $tagBase + 'SchietkaartScorer.apk' } else { '' }
+    apkSha256 = (Get-FileHash $apk -Algorithm SHA256).Hash.ToLower()
+    web = [ordered]@{
+        version = $webVersion
+        url = if ($tagBase) { $tagBase + 'www.zip' } else { '' }
+        sha256 = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLower()
+        minNative = $versionCode
+    }
+    notes = $notes
+}
+[IO.File]::WriteAllText((Join-Path $dist 'version.json'), ($ver | ConvertTo-Json), $utf8)
 if (-not $updateUrl) { Write-Host 'Let op: geen android\update-url.txt, de app zoekt nog niet naar updates.' -ForegroundColor Yellow }
-Write-Host ("Klaar: {0}  ({1:N1} MB, versie {2}, code {3})" -f $apk, ((Get-Item $apk).Length / 1MB), $versionName, $versionCode) -ForegroundColor Green
+Write-Host ("Klaar: {0}  ({1:N1} MB, versie {2}, code {3})" -f $apk, ((Get-Item $apk).Length / 1MB), $webVersion, $versionCode) -ForegroundColor Green

@@ -1,1 +1,1 @@
-Series worden automatisch bewaard en komen terug na afsluiten; eerdere series staan onder "Opgeslagen series". Fotoreeks: na elke foto direct de score met "Akkoord, volgende foto". Foto's kiezen: 12 of 60 tegelijk, automatisch op opnametijd gesorteerd.
+﻿Updates gaan voortaan binnen de app: nieuwe versies worden stil gedownload en bij de volgende start actief, zonder browser of meldingen.
