@@ -1,6 +1,6 @@
 /* Service worker van de geïnstalleerde web-app: werkt offline en werkt zichzelf bij.
    VERSION wordt bij het publiceren gezet (publish.ps1); een nieuwe versie haalt alle bestanden opnieuw op. */
-const VERSION = 'dev';
+const VERSION = '2026.11.01-1543';
 const CACHE = 'schietkaart-' + VERSION;
 const FILES = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
