@@ -38,7 +38,8 @@
         <label class="btn primary big">📷 Foto maken<input type="file" id="pickCamera" accept="image/*" capture="environment" hidden></label>
         <label class="btn big">🖼 Foto's kiezen<input type="file" id="pickFiles" accept="image/*" multiple hidden></label>
       </div>
-      <p class="hint-line">Foto maken: na elke foto zie je meteen de score en ga je met één tik door naar de volgende kaart.
+      <p class="hint-line">Foto maken: fotografeer alle kaarten achter elkaar, met één tik door naar de volgende. De app leest ze
+        op de achtergrond; daarna controleer je alleen de twijfelgevallen.
         Foto's kiezen: selecteer alle 12 (of 60) foto's in één keer; ze worden op opnamevolgorde gezet.</p>
       <div id="drop" class="drop">of sleep foto's hierheen</div>
       <div id="progress" class="progress hidden"></div>
@@ -74,7 +75,7 @@
   <div class="sheet-box">
     <div id="shotBody"></div>
     <div class="sheet-acts">
-      <button class="btn primary big" id="shotNext">✓ Akkoord, volgende foto</button>
+      <button class="btn primary big" id="shotNext">📷 Volgende foto</button>
       <button class="btn" id="shotRetry">↺ Opnieuw</button>
       <button class="btn" id="shotDone">Klaar</button>
     </div>
@@ -108,6 +109,7 @@
             <button class="btn small" id="edAdd">+ schot</button>
             <button class="btn small" id="edDel">Verwijder schot</button>
             <button class="btn small" id="edReset">Automatisch</button>
+            <button class="btn small" id="edPhoto" title="De foto van deze kaart opslaan of delen">⤓ Foto</button>
           </div>
           <button class="btn primary" id="edOk">✓ Akkoord, volgende</button>
         </div>
@@ -123,6 +125,7 @@
 <script src="js/detect.js"></script>
 <script src="js/report.js"></script>
 <script src="js/store.js"></script>
+<script src="js/zip.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

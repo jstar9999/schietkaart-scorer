@@ -8,6 +8,11 @@
     vis: [{ l: 'LB', x: 43, y: 43 }, { l: 'RB', x: 127, y: 43 }, { l: 'M', x: 85, y: 85 }, { l: 'LO', x: 43, y: 127 }, { l: 'RO', x: 127, y: 127 }]
   };
   var SMALL = { type: 1, W: 100, H: 100, strip: false, vis: [{ l: 'V', x: 50, y: 50 }] };
+  // Zwarte vormen die geen visueel zijn (embleem, nummervak): mogen nooit als extra visueel/kaart tellen.
+  var BIG_EMB = Object.assign({}, BIG, { emblem: [
+    { x: 26, y: 178, r: 11, text: 'KNSA', font: 4 }, { x: 128, y: 166, w: 24, h: 22, text: '08', font: 7 }, { x: 150, y: 20, r: 9, text: 'S', font: 8 }
+  ] });
+  var SMALL_EMB = Object.assign({}, SMALL, { emblem: [{ x: 84, y: 84, r: 9, text: 'S', font: 8 }, { x: 5, y: 5, w: 18, h: 18, text: '7', font: 8 }] });
   var PAPER = [246, 244, 238], INK = [17, 17, 17];
   var GAUGE = 5.6;
 
@@ -53,6 +58,11 @@
     } else {
       g.font = '2.5px Arial'; g.fillText('KNSA 12 m', 4, spec.H - 4);
     }
+    (spec.emblem || []).forEach(function (e) {
+      if (e.r) circ(e.x, e.y, e.r, ink); else { g.fillStyle = ink; g.fillRect(e.x, e.y, e.w, e.h); }
+      g.fillStyle = paper; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = 'bold ' + e.font + 'px Arial';
+      g.fillText(e.text, e.r ? e.x : e.x + e.w / 2, e.r ? e.y : e.y + e.h / 2);
+    });
     holes.forEach(function (h) { g.lineWidth = 0.3; circ(h.X, h.Y, h.r + 0.12, null, 'rgba(70,70,70,0.6)'); });
     return cv;
   }
@@ -146,7 +156,7 @@
     c.outW = c.outW || 2000; c.outH = c.outH || 2600;
     var fill = c.fill || 0.85, portrait = Math.abs(((c.rot || 0) % 180 + 180) % 180 - 90) > 45;
     var scale = fill * (portrait ? c.outH : c.outW) / BIG.H;
-    c.cards = [{ spec: BIG, cx: c.outW / 2, cy: c.outH / 2, rot: c.rot || 0, persp: c.persp || 0, scale: scale, perVisual: c.perVisual }];
+    c.cards = [{ spec: c.spec || BIG, cx: c.outW / 2, cy: c.outH / 2, rot: c.rot || 0, persp: c.persp || 0, scale: scale, perVisual: c.perVisual }];
     return c;
   }
 
@@ -157,7 +167,7 @@
     c.cards = [];
     for (var r = 0; r < rows; r++) for (var k = 0; k < cols; k++) {
       c.cards.push({
-        spec: SMALL, scale: s, persp: c.persp || 0.01, rot: (R() * 2 - 1) * 8 + (c.rot || 0),
+        spec: c.spec || SMALL, scale: s, persp: c.persp || 0.01, rot: (R() * 2 - 1) * 8 + (c.rot || 0),
         cx: c.outW / 2 + (k - (cols - 1) / 2) * 112 * s, cy: c.outH / 2 + (r - (rows - 1) / 2) * 112 * s
       });
     }
@@ -214,8 +224,12 @@
           } else row.missed = true;
           rows.push(row);
         });
-        var extra = vis.holes.length - Object.keys(used).length;
-        if (extra > 0) rows.push({ card: tci, vis: tv.l, falsePositive: extra });
+        vis.holes.forEach(function (dh, idx) {
+          if (used[idx]) return;
+          var dd = Math.hypot(dh.u, dh.v);
+          rows.push({ card: tci, vis: tv.l, falsePositive: 1, dDet: +dd.toFixed(2), score: KS.target.scoreShot(dd, GAUGE).value, fit: dh.fit, resp: +dh.response.toFixed(2),
+            cert: +KS.target.certainty(dd, dh.sigma, GAUGE, dh.pDetect).toFixed(3), warn: vis.warnings.join(' ') });
+        });
       });
       cardsOut.push(cardRow);
     });
@@ -242,7 +256,11 @@
     bigCase({ name: 'deel-van-kaart', bg: GREEN, persp: 0.01, rot: 3, seed: 20, fill: 1.45 }),
     smallGrid({ name: 'klein-6-groen', bg: GREEN, seed: 31, cols: 3, rows: 2 }),
     smallGrid({ name: 'klein-6-wit-grens', bg: WHITE, seed: 32, cols: 3, rows: 2, anyMargin: true }),
-    smallGrid({ name: 'klein-1', bg: GREEN, seed: 33, cols: 1, rows: 1, scale: 14, outW: 2000, outH: 2000 })
+    smallGrid({ name: 'klein-1', bg: GREEN, seed: 33, cols: 1, rows: 1, scale: 14, outW: 2000, outH: 2000 }),
+    bigCase({ name: 'embleem-groen', bg: GREEN, persp: 0.03, rot: 9, seed: 41, spec: BIG_EMB }),
+    bigCase({ name: 'embleem-wit-180-reeks5', bg: WHITE, persp: 0.03, rot: 176, seed: 42, spec: BIG_EMB, mode: '5' }),
+    smallGrid({ name: 'klein-embleem', bg: GREEN, seed: 43, cols: 3, rows: 2, spec: SMALL_EMB, mode: '1' }),
+    smallGrid({ name: 'klein-embleem-wit', bg: WHITE, seed: 44, cols: 2, rows: 2, scale: 9, spec: SMALL_EMB, mode: '1' })
   ];
 
   function prepare(cs) {
@@ -253,8 +271,9 @@
 
   async function run() {
     var out = document.getElementById('out'), summary = [], all = [];
-    for (var ci = 0; ci < CASES.length; ci++) {
-      var cs = prepare(CASES[ci]);
+    var only = /[?&]only=([^&]+)/.exec(location.search), list = only ? CASES.filter(function (c) { return c.name === decodeURIComponent(only[1]); }) : CASES;
+    for (var ci = 0; ci < list.length; ci++) {
+      var cs = prepare(list[ci]);
       var photo = makePhoto(cs), img = await loadJpeg(photo.canvas, 0.85);
       var full = toImageData(img, 3200), work = toImageData(img, 1100);
       var res = KS.detect.analyzePhoto(full, work, { mode: cs.mode });
@@ -279,6 +298,7 @@
         wrongNotFlagged: wrong.filter(function (r) { return r.cert >= 0.75; }).length,
         maxErr: found.length ? +Math.max.apply(null, found.map(function (r) { return r.err; })).toFixed(3) : null,
         z90: found.length ? +(found.filter(function (r) { return r.z < 1.645; }).length / found.length).toFixed(2) : null,
+        rings: res.cards.map(function (c) { return c.visuals.map(function (v) { return v.rings ? v.rings.score : '-'; }).join(''); }).join('|'),
         dbg: big && res.cards[0] && res.cards[0].orientation ? res.cards[0].orientation.dbg : null
       });
       all.push({ case: cs.name, rows: rows });

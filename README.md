@@ -23,12 +23,18 @@ Draait volledig in de browser (geen server, geen installatie). Werkt op pc en te
 
 ## Fotoreeks en opslaan
 
-- **Foto maken**: na elke foto verschijnt meteen de score van die kaart met "✓ Akkoord, volgende foto"
-  (camera gaat direct weer open), "↺ Opnieuw" of "Klaar". Zo fotografeer je 12 kaarten achter elkaar.
+- **Foto maken**: fotografeer alle kaarten achter elkaar. Na elke foto: "📷 Volgende foto" (camera gaat
+  direct weer open), "↺ Foto n opnieuw" of "Klaar". De app leest de foto's op de achtergrond en meldt alleen
+  een foto die niet (helemaal) herkend wordt; de schoten beoordeel je daarna in één keer.
+  Elke camerafoto wordt direct bewaard: gaat de app tussendoor dicht, dan wordt hij bij het openen alsnog gelezen.
 - **Foto's kiezen**: kies alle 12 of 60 foto's in één keer; ze worden op opnametijd (EXIF) gesorteerd.
 - **Automatisch bewaren**: elke wijziging wordt opgeslagen op het apparaat (app: app-map, browser:
   IndexedDB). Na opnieuw starten is de serie er weer. Eerdere series staan onder "Opgeslagen series";
   "Nieuwe serie" bewaart de huidige en begint een lege.
+- **Foto's bewaren**: de foto's (zoals geanalyseerd, max. 3200 px) van de laatste 5 series blijven bewaard.
+  "⤓ Foto" bij een kaart of in de controle slaat de foto op of deelt hem; "Feedback (foto's)" maakt een
+  .zip met alle foto's, wat de app vond, wat jij corrigeerde en een opmerking — om fouten in de herkenning
+  door te geven. (In de oude Android-app alleen via de web-app.)
 
 ## Uitvoer
 
@@ -93,12 +99,15 @@ Met d = afstand van het schotmiddelpunt tot het schijfmiddelpunt en g = halve sc
 
 ## Hoe de herkenning werkt
 
-1. Zwarte schijven (Ø 25 mm) zoeken en groeperen tot een kaart (vier hoeken + midden).
+1. Zwarte schijven (Ø 25 mm) zoeken en groeperen tot een kaart (vier hoeken + midden). Een grote kaart
+   heeft altijd precies die vijf visuelen: andere zwarte vormen op de kaart (embleem, nummervak, stempel)
+   tellen nooit mee. Bij losse kaarten moet een schijf de gedrukte ringlijnen hebben.
 2. Perspectief van de kaart schatten uit de vijf schijven, daarna per visueel de rand van het zwart
    nauwkeurig fitten. Dat levert het middelpunt en de schaal in mm.
 3. Rond elk visueel een rechtgetrokken uitsnede maken en kogelgaten zoeken als afwijking van de
    verwachte schijf (licht of gekleurd in het zwart, afwijkend in het wit).
-4. De rand van het gat fitten met een cirkel → schotmiddelpunt → waarde.
+4. De rand van het gat fitten met een cirkel → schotmiddelpunt → waarde. Eén schot per visueel: een
+   tweede gat-achtige vlek telt niet mee (alleen een melding in de controle).
 
 ## Testen
 
@@ -116,6 +125,5 @@ tegenlicht-ondergrond, ook bij flink scheef fotograferen. Gemiddelde fout van he
 - Nog niet getoetst op echte foto's: echte gaten zijn rafeliger dan gesimuleerde.
 - Gaten die volledig in het wit liggen, op een witte ondergrond, zijn alleen aan de loodrand te
   herkennen. Die krijgen "laag vertrouwen" en worden ter controle gemarkeerd.
-- Regels voor te veel schoten op een kaart of in één visueel worden niet automatisch toegepast;
-  de app meldt het, de beoordeling ligt bij jou/de wedstrijdleiding.
-- Uitslagen worden niet bewaard tussen sessies; exporteer ze.
+- De app telt één schot per visueel. Een echt dubbel schot in één visueel moet je in de controle zelf
+  toevoegen ("+ schot"); de beoordeling ligt bij jou/de wedstrijdleiding.

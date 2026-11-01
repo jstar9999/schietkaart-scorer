@@ -47,8 +47,23 @@ window.addEventListener('load', async function () {
     // Opnametijden expres in omgekeerde volgorde van de lijst: de app moet op tijd sorteren.
     files.push(new File([blob], cs.name + '.jpg', { type: 'image/jpeg', lastModified: new Date(2026, 9, 28, 20, 15 + (cases.length - i)).getTime() }));
   }
-  await KS.app.enqueue(files, { camera: /sheet=1/.test(q) });
+  if (/sheet=1/.test(q)) await KS.app.capture(files);
+  else await KS.app.enqueue(files);
   while (KS.app.state.busy || KS.app.state.queue.length) await new Promise(function (r) { setTimeout(r, 50); });
+
+  if (/feedback=1/.test(q)) {
+    // Feedbackpakket maken en de zip (base64) teruggeven in plaats van te downloaden.
+    var blob2 = null, orig = URL.createObjectURL;
+    window.prompt = function () { return 'test: kaart 1 M moet 8 zijn'; };
+    URL.createObjectURL = function (b) { blob2 = b; return orig.call(URL, b); };
+    HTMLAnchorElement.prototype.click = function () { /* geen download */ };
+    await KS.app.exportFeedback();
+    URL.createObjectURL = orig;
+    var bytes = new Uint8Array(await blob2.arrayBuffer()), bin = '';
+    for (var k = 0; k < bytes.length; k += 32768) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 32768));
+    out('ZIP ' + bytes.length + '\n' + btoa(bin));
+    return;
+  }
 
   if (/persist=1/.test(q)) {
     await KS.app.flushSave();

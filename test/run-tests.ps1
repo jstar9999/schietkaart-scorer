@@ -13,7 +13,7 @@ $common = @('--headless=new', '--disable-gpu', '--no-first-run', "--user-data-di
 
 $out = & $edge @common --dump-dom (Url (Join-Path $test 'synth.html')) 2>$null | Out-String
 $i = $out.IndexOf('{'); $json = $out.Substring($i, $out.LastIndexOf('}') - $i + 1) | ConvertFrom-Json
-$json.summary | Select-Object case, cards, types, order, orient, labels, shots, correct, missed, falsePos, flagged, dagger, wrongNotFlagged, maxErr | Format-Table -AutoSize | Out-String -Width 220
+$json.summary | Select-Object case, cards, types, order, orient, labels, shots, correct, missed, falsePos, flagged, dagger, wrongNotFlagged, maxErr, rings | Format-Table -AutoSize | Out-String -Width 240
 
 & $edge @common '--window-size=1200,2400' "--screenshot=$(Join-Path $test 'screenshot-main.png')" (Url (Join-Path $test 'e2e.html')) 2>$null | Out-Null
 & $edge @common '--window-size=1200,1600' "--screenshot=$(Join-Path $test 'screenshot-small.png')" ((Url (Join-Path $test 'e2e.html')) + '?series=60x1') 2>$null | Out-Null
@@ -27,6 +27,19 @@ $json.summary | Select-Object case, cards, types, order, orient, labels, shots, 
 $p = & $edge @common --dump-dom ((Url (Join-Path $test 'e2e.html')) + '?persist=1') 2>$null | Out-String
 $m = [regex]::Match($p, 'PERSIST \w+[^<]*?kaarten na herladen: \d+')
 if ($m.Success) { $m.Value } else { 'PERSIST: geen uitvoer' }
+
+# Feedbackpakket: zip met foto's + serie.json, moet met .NET te openen zijn
+$f = & $edge @common --dump-dom ((Url (Join-Path $test 'e2e.html')) + '?feedback=1') 2>$null | Out-String
+$m = [regex]::Match($f, 'ZIP (\d+)\s+([A-Za-z0-9+/=]+)')
+if ($m.Success) {
+  $zipPath = Join-Path $test 'feedback-test.zip'
+  [IO.File]::WriteAllBytes($zipPath, [Convert]::FromBase64String($m.Groups[2].Value))
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $z = [IO.Compression.ZipFile]::OpenRead($zipPath)
+  $names = $z.Entries | ForEach-Object { $s = $_.Open(); $ms = New-Object IO.MemoryStream; $s.CopyTo($ms); $s.Close(); "$($_.FullName) ($($ms.Length) b)" }
+  $z.Dispose()
+  'FEEDBACK-ZIP OK: ' + ($names -join ', ')
+} else { 'FEEDBACK-ZIP: geen uitvoer' }
 
 # Voorbeeldrapport als PDF
 & $edge @common '--no-pdf-header-footer' "--print-to-pdf=$(Join-Path $test 'rapport-voorbeeld.pdf')" ((Url (Join-Path $test 'e2e.html')) + '?report=1') 2>$null | Out-Null

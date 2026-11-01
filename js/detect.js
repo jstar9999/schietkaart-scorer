@@ -19,7 +19,7 @@
     coarseFactor: 4,     // grove zoekkaart op roiScale/4 px per mm
     maxShotRadius: 26,   // mm, verder weg = niet bij dit visueel
     minResponse: 0.22,
-    maxHoles: 4
+    maxHoles: 2          // het tweede gat alleen om te waarschuwen: er telt één schot per visueel
   };
 
   var T = KS.target.KNSA12M1986;
@@ -302,6 +302,39 @@
       if (Math.hypot(f.cx, f.cy) < 0.003 && Math.abs(f.s1 / R_BLACK - 1) < 5e-4 && Math.abs(f.s2 / R_BLACK - 1) < 5e-4) break;
     }
     return { map: map, edge: edge };
+  }
+
+  /* Hoeveel van de 8 gedrukte ringlijnen zijn rond deze schijf terug te vinden (5 lichte in het zwart, 3 donkere
+     in het wit)? Mediaan over 120 richtingen, zodat gaten en cijfers niet meetellen. Een embleem, zwart vlak of
+     stempel heeft deze lijnen niet. null = schijf deels buiten beeld, niet te beoordelen. */
+  function ringEvidence(S, map) {
+    var nA = 120, step = 0.05, r0 = 0.6, r1 = 21.4, nR = Math.round((r1 - r0) / step) + 1;
+    var prof = new Float64Array(nR), vals = [], i, k, x;
+    for (i = 0; i < nR; i++) {
+      var r = r0 + i * step;
+      vals.length = 0;
+      for (k = 0; k < nA; k++) {
+        var t = 2 * Math.PI * k / nA, P = mapPoint(map, r * Math.cos(t), r * Math.sin(t)), g = S.gray(P.x, P.y);
+        if (g >= 0) vals.push(g);
+      }
+      if (vals.length < 0.8 * nA) return null;
+      prof[i] = IMG.median(vals);
+    }
+    function at(rr) { return prof[Math.max(0, Math.min(nR - 1, Math.round((rr - r0) / step)))]; }
+    function peak(R, sign) { var b = -Infinity; for (var y = R - 0.25; y <= R + 0.25; y += step) b = Math.max(b, sign * at(y)); return sign * b; }
+    var bs = [], ws = [];
+    for (x = 1.8; x <= 11.8; x += step) if (!nearAny(x, INNER, 0.4)) bs.push(at(x));
+    for (x = 13.3; x <= 21.2; x += step) if (!nearAny(x, OUTER, 0.4)) ws.push(at(x));
+    var con = IMG.median(ws) - IMG.median(bs), found = 0;
+    if (!(con >= 20)) return { score: 0, contrast: con };
+    INNER.forEach(function (R) {
+      var bg = R < 2 ? at(R + 0.6) : (at(R - 0.6) + at(R + 0.6)) / 2;
+      if ((peak(R, 1) - bg) / con > 0.08) found++;
+    });
+    OUTER.forEach(function (R) {
+      if (((at(R - 0.8) + at(R + 0.8)) / 2 - peak(R, -1)) / con > 0.08) found++;
+    });
+    return { score: found, contrast: con };
   }
 
   // Ligging van de visuelen op de kaart (mm t.o.v. het middelste visueel), naar positie op de foto.
@@ -595,6 +628,8 @@
     if (h.method === 'rand') p = Math.min(p, 0.9);
     if (h.elongated) p = Math.min(p, 0.8);
     if (h.fit === 'grof') p = Math.min(p, 0.6);
+    // Buiten ring 1: een echte misser is zeldzaam, een rand van een embleem, tekst of de ondergrond niet.
+    if (Math.hypot(h.u, h.v) > 21) p = Math.min(p, 0.6);
     return p;
   }
 
@@ -605,6 +640,11 @@
     var roi = rectify(S, ref.map, o), L = estimateLevels(roi);
     if (L.contrast < 40) warnings.push('Weinig contrast tussen zwart en wit.');
     var a = computeAnomaly(roi, L, o), holes = findHoles(roi, a, o);
+    // Eén schot per visueel (KNSA-kaart): een tweede 'gat' is vrijwel altijd een scheurtje, vlek of cijfer.
+    var extra = holes.slice(1);
+    holes = holes.slice(0, 1);
+    if (extra.some(function (h) { return h.response >= 0.5 && h.fit === 'vrij'; }))
+      warnings.push('Nog een mogelijk gat gezien; geteld is alleen het duidelijkste.');
     var jac = jacobian(ref.map);
     var vis = {
       map: ref.map,
@@ -614,12 +654,12 @@
       perspective: !!perspective,
       levels: { B: L.gB, W: L.gW, contrast: L.contrast, cInk: L.cInk, cPaper: L.cPaper },
       roi: { N: roi.N, scale: roi.scale, half: roi.half, rgba: roi.rgba },
+      rings: ringEvidence(S, ref.map),
       holes: holes,
       warnings: warnings
     };
     holes.forEach(function (h) { h.conf = holeConfidence(h); h.sigma = holeSigma(h, vis); h.pDetect = holeDetectP(h); });
     if (!holes.length) warnings.push('Geen schot gevonden.');
-    if (holes.length > 1) warnings.push(holes.length + ' schoten gevonden in dit visueel.');
     holes.forEach(function (h) { if (h.elongated) warnings.push('Gat is groter dan één kogel: mogelijk dubbel schot.'); });
     return vis;
   }
@@ -734,7 +774,8 @@
   }
 
   /* full: beeld op volle resolutie, work: verkleinde kopie (zelfde verhouding). Beide {data,width,height}.
-     o.mode: 'auto' (grote en kleine kaarten herkennen) of '1' (alleen losse 1-schotskaarten). */
+     o.mode: '5' (reeks grote kaarten: alleen 5-visueelskaarten), '1' (alleen losse 1-schotskaarten)
+     of 'auto' (beide herkennen). */
   function analyzePhoto(full, work, o) {
     o = options(o);
     var mode = o.mode || 'auto';
@@ -758,32 +799,54 @@
     }
     if (!best || !best.cands.length) return { cards: [], warnings: ['Geen visuelen (zwarte schijven) gevonden op deze foto.'], ms: Date.now() - t0 };
 
+    var S = makeSampler(full);
+    function refOf(d) {
+      if (!d.ref) {
+        var disc = { x: (d.x + 0.5) * scale - 0.5, y: (d.y + 0.5) * scale - 0.5, a: d.a * scale, b: d.b * scale, theta: d.theta };
+        d.ref = refineDisc(S, mapFromEllipse(disc));
+      }
+      return d.ref;
+    }
+
     var used = [], groups = [];
     best.q.forEach(function (g) {
       used = used.concat([g.center], g.corners);
       groups.push({ type: 5, quincunx: true, discs: labelQuincunx(g) });
     });
     var rest = best.cands.filter(function (d) { return used.indexOf(d) < 0; });
+    // Een grote kaart heeft precies vijf visuelen in vaste ligging. Andere zwarte vormen op of naast de kaart
+    // (embleem, nummervak, stempel) zijn nooit een zesde visueel.
+    best.q.forEach(function (g) {
+      var reach = 2.5 * IMG.median(g.corners.map(function (c) { return Math.hypot(c.x - g.center.x, c.y - g.center.y); }));
+      rest = rest.filter(function (d) { return Math.hypot(d.x - g.center.x, d.y - g.center.y) > reach; });
+    });
+    if (mode === '5' && best.q.length) rest = [];
+    // Losse schijven alleen houden als ze de gedrukte ringlijnen hebben, mits die op deze foto te zien zijn.
+    if (rest.length) {
+      var top = 0;
+      rest.concat(best.q.map(function (g) { return g.center; })).forEach(function (d) {
+        d.rings = ringEvidence(S, refOf(d).map);
+        if (d.rings) top = Math.max(top, d.rings.score);
+      });
+      if (top >= 5) rest = rest.filter(function (d) { return !d.rings || d.rings.score >= 3; });
+    }
     clusterDiscs(rest).forEach(function (cl) {
-      if (cl.length === 1 || mode === '1') {
+      if (mode === '1' || (cl.length === 1 && mode !== '5')) {
         cl.forEach(function (d) {
           d.label = 'V';
           groups.push({ type: 1, quincunx: false, discs: [d], nearOthers: cl.length > 1 });
         });
       } else {
+        if (cl.length > 5) cl = cl.sort(function (p, r) { return (r.rings ? r.rings.score : 0) - (p.rings ? p.rings.score : 0); }).slice(0, 5);
         cl.sort(function (p, r) { return (p.y - r.y) || (p.x - r.x); });
         cl.forEach(function (d, i) { d.label = 'V' + (i + 1); });
         groups.push({ type: 5, quincunx: false, partial: true, discs: cl });
       }
     });
 
-    var S = makeSampler(full);
     var cards = groups.map(function (g) {
       var labels = g.discs.map(function (d) { return d.label; });
-      var refs = g.discs.map(function (d) {
-        var disc = { x: (d.x + 0.5) * scale - 0.5, y: (d.y + 0.5) * scale - 0.5, a: d.a * scale, b: d.b * scale, theta: d.theta };
-        return refineDisc(S, mapFromEllipse(disc));
-      });
+      var refs = g.discs.map(refOf);
       var perspective = false, orientation = null, G = null, cardPos = labels.map(function () { return [0, 0]; });
       if (g.quincunx && refs.every(function (r) { return r.edge; })) {
         G = cardHomography(refs.map(function (r) { return r.map; }), labels);
@@ -830,7 +893,8 @@
       };
     });
     if (cards.length > 1) cards = readingOrder(cards);
-    return { cards: cards, warnings: [], ms: Date.now() - t0, width: full.width, height: full.height };
+    var kept = groups.reduce(function (s, g) { return s + g.discs.length; }, 0);
+    return { cards: cards, warnings: [], ms: Date.now() - t0, width: full.width, height: full.height, ignoredDiscs: best.cands.length - kept };
   }
 
   KS.detect = { analyzePhoto: analyzePhoto, mapPoint: mapPoint, labelFromCardPos: labelFromCardPos, LABEL_ORDER: LABEL_ORDER, DEFAULTS: DEFAULTS };

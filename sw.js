@@ -1,10 +1,10 @@
 /* Service worker van de geïnstalleerde web-app: werkt offline en werkt zichzelf bij.
    VERSION wordt bij het publiceren gezet (publish.ps1); een nieuwe versie haalt alle bestanden opnieuw op. */
-const VERSION = '2026.11.01-1543';
+const VERSION = '2026.11.01-1909';
 const CACHE = 'schietkaart-' + VERSION;
 const FILES = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
-  './js/imgproc.js', './js/target.js', './js/detect.js', './js/report.js', './js/store.js', './js/app.js',
+  './js/imgproc.js', './js/target.js', './js/detect.js', './js/report.js', './js/store.js', './js/zip.js', './js/app.js',
   './icons/icon-192.png', './icons/icon-512.png'
 ];
 

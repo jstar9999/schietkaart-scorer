@@ -1,1 +1,1 @@
-﻿Installeerbaar als web-app via Chrome (geen veiligheidsmeldingen, automatische updates). Series exporteren en importeren als bestand.
+﻿Fotoreeks zonder tussentijds beoordelen: na elke foto direct de volgende, schoten controleer je aan het eind. Grote kaart telt altijd precies 5 visuelen en 1 schot per visueel (embleem of zwart vlak telt niet meer mee). Foto's worden bewaard: "Foto" per kaart en "Feedback (foto's)" als zip.

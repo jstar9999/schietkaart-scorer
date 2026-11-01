@@ -39,7 +39,8 @@
     return {
       put: function (k, v) { return tx('readwrite', function (s) { return s.put(v, k); }); },
       get: function (k) { return tx('readonly', function (s) { return s.get(k); }); },
-      del: function (k) { return tx('readwrite', function (s) { return s.delete(k); }); }
+      del: function (k) { return tx('readwrite', function (s) { return s.delete(k); }); },
+      delPrefix: function (p) { return tx('readwrite', function (s) { return s.delete(IDBKeyRange.bound(p, p + '￿')); }); }
     };
   })();
 
@@ -76,5 +77,52 @@
     });
   }
 
-  KS.store = { list: list, save: save, load: load, remove: remove, backend: testStore ? 'test' : (B ? 'android' : 'indexeddb') };
+  /* Foto's, los van de serie (die wordt bij elke wijziging opnieuw geschreven): sleutel 'p-<serie>-<fotonummer>'.
+     IndexedDB bewaart de JPEG zelf; de Android-koppeling en de testopslag alleen tekst, dus daar als data-URL
+     (test: in het geheugen, sessionStorage is te klein). */
+  var memPhotos = {};
+
+  function photoKey(sid, no) { return 'p-' + sid + '-' + no; }
+
+  function blobToDataUrl(b) {
+    return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; r.readAsDataURL(b); });
+  }
+
+  function dataUrlToBlob(s) {
+    var i = s.indexOf(','), bin = atob(s.slice(i + 1)), u = new Uint8Array(bin.length);
+    for (var k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k);
+    return new Blob([u], { type: s.slice(5, s.indexOf(';')) || 'image/jpeg' });
+  }
+
+  function putPhoto(sid, no, blob) {
+    var k = photoKey(sid, no);
+    if (testStore) { memPhotos[k] = blob; return Promise.resolve(); }
+    if (B) return blobToDataUrl(blob).then(function (s) { return bridge.put(k, s); });
+    return idb.put(k, blob);
+  }
+
+  function getPhoto(sid, no) {
+    var k = photoKey(sid, no);
+    if (testStore) return Promise.resolve(memPhotos[k] || null);
+    return be.get(k).then(function (v) { return typeof v === 'string' ? dataUrlToBlob(v) : (v || null); }, function () { return null; });
+  }
+
+  function removePhoto(sid, no) {
+    var k = photoKey(sid, no);
+    if (testStore) { delete memPhotos[k]; return Promise.resolve(); }
+    return be.del(k);
+  }
+
+  // Alle foto's van een serie; upTo = hoogste fotonummer (nodig voor de Android-koppeling, die geen bereik kent).
+  function removePhotos(sid, upTo) {
+    if (!B && !testStore) return idb.delPrefix(photoKey(sid, ''));
+    var all = [];
+    for (var n = 1; n <= (upTo || 0); n++) all.push(removePhoto(sid, n));
+    return Promise.all(all);
+  }
+
+  KS.store = {
+    list: list, save: save, load: load, remove: remove, backend: testStore ? 'test' : (B ? 'android' : 'indexeddb'),
+    putPhoto: putPhoto, getPhoto: getPhoto, removePhoto: removePhoto, removePhotos: removePhotos
+  };
 })(typeof window !== 'undefined' ? window : this);

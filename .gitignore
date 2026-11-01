@@ -9,3 +9,5 @@ android/dist/
 test/e2e.html
 test/*.png
 test/*.pdf
+test/*.zip
+test/echt/
