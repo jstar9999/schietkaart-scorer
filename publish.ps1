@@ -21,7 +21,8 @@ git commit -q -m "Versie $($ver.versionName)" 2>$null
 git push -q origin main
 if ($LASTEXITCODE -ne 0) { Fail 'git push' }
 
-$relNotes = if ($Notes) { $Notes } else { "Versie $($ver.versionName)" }
+$notesFile = Join-Path $root 'android\release-notes.txt'
+$relNotes = if ($Notes) { $Notes } elseif (Test-Path $notesFile) { (Get-Content $notesFile -Raw -Encoding UTF8).Trim() } else { "Versie $($ver.versionName)" }
 gh release create $tag (Join-Path $root 'android\dist\SchietkaartScorer.apk') (Join-Path $root 'android\dist\version.json') --title "Schietkaart Scorer $($ver.versionName)" --notes $relNotes
 if ($LASTEXITCODE -ne 0) { Fail 'GitHub-release maken' }
 Write-Host "Gepubliceerd: $tag  ->  https://github.com/jstar9999/schietkaart-scorer/releases/latest" -ForegroundColor Green

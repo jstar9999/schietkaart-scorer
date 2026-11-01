@@ -159,14 +159,25 @@
         blocks.push({ h: (i ? 4 : 12) + 6 + part.length * 6.2, html: (i ? '' : '<h2>Grensgevallen</h2>') + '<table class="ctl">' + bh + part.join('') + '</table>' });
       }
     }
+    var rv = d.shots.filter(function (s) { return s.reviewed; });
+    if (rv.length) {
+      var rh = '<tr><th>Schot</th><th>Kaart / positie</th><th>Score</th><th>Controle door schutter</th></tr>';
+      for (var j = 0; j < rv.length; j += 30) {
+        var rpart = rv.slice(j, j + 30).map(function (s) {
+          return '<tr><td>' + s.no + '</td><td>' + s.card + (s.pos ? ' / ' + s.pos : '') + '</td><td>' + s.value + '</td><td>' + esc(s.reviewed) + '</td></tr>';
+        });
+        blocks.push({ h: (j ? 4 : 12) + 6 + rpart.length * 6.2, html: (j ? '' : '<h2>Door schutter gecontroleerd</h2>') + '<table class="ctl">' + rh + rpart.join('') + '</table>' });
+      }
+    }
     var st = stats(d.shots), half = Math.ceil(d.shots.length / 2);
     var g = d.gauge;
-    blocks.push({ h: 84, html: '<h2>Waardering en herleidbaarheid</h2><p class="small">' + [
+    blocks.push({ h: 90, html: '<h2>Waardering en herleidbaarheid</h2><p class="small">' + [
       'De ellips van elk zwart richtbeeld is op 25,0 mm gekalibreerd en, met het perspectief van de kaart, rechtgetrokken.',
       'De rand van het zwart bepaalt het centrum. Een virtuele schotmaat van ' + nl(g, 1) + ' mm ligt op het gatcentrum.',
       'Ringen 1-9: hoogste geraakte ring. Een 10: de witte stip van 1,4 mm is geheel door de maat bedekt.',
       'Mouche (10*): de maat ligt geheel binnen de 8-ring. In deze telling ' + (mou ? (mou === 1 ? 'is 1 mouche' : 'zijn ' + mou + ' mouches') : 'zijn geen mouches') + ' gevonden.',
-      '† = grensgeval: de kans dat de berekende waarde klopt is kleiner dan 90% (meetonzekerheid ten opzichte van de ringgrens). Controleer deze met de schotmaat op de kaart.',
+      '† = grensgeval: de kans dat de berekende waarde klopt is kleiner dan 90% (dicht bij een ringgrens); het alternatief staat bij Grensgevallen.',
+      'Schoten onder 75% zekerheid en visuelen met een afwijkend aantal schoten zijn verplicht door de schutter gecontroleerd (zie Door schutter gecontroleerd).',
       'De CSV houdt exact vijf kolommen en bevat de berekende score; de alternatieven staan in dit controleoverzicht.',
       'Shot Number en Scan Number lopen beide van 1 tot ' + d.shots.length + '. Dit is kaart-/positievolgorde, geen bewezen tijdvolgorde.',
       'x is rechts positief; y is boven positief (mm ten opzichte van het schijfcentrum). De twee decimalen zijn geen meetnauwkeurigheid.',

@@ -1,1 +1,1 @@
-Eerste online versie: automatisch draaien, grote en kleine kaarten, reeks 12×5 of 60×1, zekerheid per schot (markering onder 90%), rapport (PDF) en CSV, en updatemelding bij nieuwe versies.
+Groen vanaf 75% zekerheid. Daaronder is controle door de schutter verplicht: rapport, CSV en uitslag komen pas beschikbaar als alle gemarkeerde schoten gecontroleerd zijn. In het rapport: grensgevallen (75-90%) met alternatief en bereik, plus een lijst "Door schutter gecontroleerd".

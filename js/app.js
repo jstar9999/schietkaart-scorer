@@ -4,7 +4,8 @@
   var T = KS.target, TGT = T.KNSA12M1986, D = KS.detect;
   var FULL_MAX = 3200, WORK_MAX = 1100, THUMB_MAX = 640;
   var ZOOMS = [3, 4.5, 6.5, 9, 13, 18, 27];
-  var CERT_OK = 0.9;                       // vanaf 90% zekerheid geen markering
+  var CERT_OK = 0.75;                      // vanaf 75% groen; daaronder is controle door de schutter verplicht
+  var CERT_REPORT = 0.9;                   // in het rapport: grensgeval (†) onder 90%, met alternatief en bereik
   var SERIES = {
     '12x5': { cards: 12, type: 5, name: '12 × 5', long: '12 kaarten × 5 schoten' },
     '60x1': { cards: 60, type: 1, name: '60 × 1', long: '60 kaarten × 1 schot' }
@@ -55,11 +56,10 @@
   }
   function shotColor(s) {
     if (s.manual) return COLORS.manual;
-    var c = shotCert(s);
-    return c >= CERT_OK ? COLORS.ok : (c >= 0.7 ? COLORS.mid : COLORS.bad);
+    return shotCert(s) >= CERT_OK ? COLORS.ok : COLORS.bad;
   }
 
-  // Markeren alleen bij afwijkend aantal schoten of zekerheid onder 90%.
+  // Verplichte controle bij afwijkend aantal schoten of zekerheid onder 75%.
   function visualNeedsCheck(card, v) {
     if (v.checked) return false;
     if (v.shots.length !== 1) return true;
@@ -603,21 +603,40 @@
 
     var acts = el('div', 'sum-actions');
     if (tot.check) {
+      box.appendChild(el('div', 'attention plain', tot.check + (tot.check === 1 ? ' visueel moet' : ' visuelen moeten') +
+        ' nog door de schutter gecontroleerd worden (zekerheid onder 75% of afwijkend aantal schoten). Daarna zijn rapport en CSV beschikbaar.'));
       var chk = el('button', 'btn primary', 'Controleer ' + tot.check + (tot.check === 1 ? ' schot' : ' schoten'));
-      chk.title = 'Schoten met minder dan 90% zekerheid of een afwijkend aantal';
-      chk.addEventListener('click', function () { var f = findNextCheck(null, -1); if (f) openEditor(f.card, f.vi); });
+      chk.addEventListener('click', startReview);
       acts.appendChild(chk);
     } else if (tot.shots) acts.appendChild(el('span', 'allok', '✓ Alle schoten zeker of gecontroleerd'));
-    var rep = el('button', 'btn small', 'Rapport (PDF)'); rep.addEventListener('click', makeReport);
+    var rep = el('button', 'btn small', 'Rapport (PDF)'); rep.addEventListener('click', function () { afterReview(makeReport); });
     acts.appendChild(rep);
-    var copy = el('button', 'btn small', 'Kopieer uitslag'); copy.addEventListener('click', copyResult);
-    var csv = el('button', 'btn small', window.AndroidBridge ? 'Deel CSV' : 'Download CSV'); csv.addEventListener('click', downloadCsv);
+    var copy = el('button', 'btn small', 'Kopieer uitslag'); copy.addEventListener('click', function () { afterReview(copyResult); });
+    var csv = el('button', 'btn small', window.AndroidBridge ? 'Deel CSV' : 'Download CSV'); csv.addEventListener('click', function () { afterReview(downloadCsv); });
     var clr = el('button', 'btn small', 'Nieuwe serie');
     clr.addEventListener('click', function () {
       if (confirm('Alle kaarten wissen en een nieuwe serie beginnen?')) { state.cards = []; state.photos = 0; state.dateManual = false; $('cards').innerHTML = ''; renderAll(); }
     });
     acts.appendChild(copy); acts.appendChild(csv); acts.appendChild(clr);
     box.appendChild(acts);
+  }
+
+  // ------------------------------------------------------------------ verplichte controle
+
+  function pendingChecks() {
+    var n = 0;
+    competitionCards().forEach(function (c) { c.visuals.forEach(function (v) { if (visualNeedsCheck(c, v)) n++; }); });
+    return n;
+  }
+
+  function startReview() { var f = findNextCheck(null, -1); if (f) openEditor(f.card, f.vi); }
+
+  // Uitvoer pas na controle van alle schoten onder 75% zekerheid.
+  function afterReview(action) {
+    var n = pendingChecks();
+    if (!n) { action(); return; }
+    if (confirm('Nog ' + n + (n === 1 ? ' schot' : ' schoten') + ' met minder dan 75% zekerheid of een afwijkend aantal.\n' +
+      'Controle door de schutter is verplicht voordat de uitslag gemaakt wordt.\n\nNu controleren?')) startReview();
   }
 
   // ------------------------------------------------------------------ export
@@ -685,15 +704,23 @@
       c.visuals.forEach(function (v) {
         (v.shots.length ? v.shots : [null]).forEach(function (s) {
           var it = { no: ++no, card: ci + 1, pos: c.type === 5 ? v.label : '' };
+          var anomaly = v.shots.length !== 1;
           if (s) {
-            var sc = shotScore(s), sure = s.manual || v.checked || shotCert(s) >= CERT_OK;
-            it.value = sc.value; it.mouche = sc.mouche; it.d = sc.d; it.x = s.u; it.y = -s.v; it.boundary = !sure;
-            if (!sure) {
+            var sc = shotScore(s), auto = s.manual ? null : shotCert(s);
+            var validated = s.manual || v.checked;
+            it.value = sc.value; it.mouche = sc.mouche; it.d = sc.d; it.x = s.u; it.y = -s.v;
+            it.boundary = !validated && auto < CERT_REPORT;
+            if (s.manual) it.reviewed = 'handmatig geplaatst';
+            else if (v.checked && (auto < CERT_OK || anomaly)) it.reviewed = 'akkoord na controle (' + pct(auto) + ')';
+            if (it.boundary) {
               var down = sc.toLower !== null && (sc.toHigher === null || sc.toLower <= sc.toHigher);
               it.alt = down ? sc.value - 1 : sc.value + 1;
               it.ringR = down ? sc.d + sc.toLower : sc.d - sc.toHigher;
             }
-          } else { it.value = 0; it.miss = true; it.x = null; it.y = null; it.d = null; it.boundary = false; }
+          } else {
+            it.value = 0; it.miss = true; it.x = null; it.y = null; it.d = null; it.boundary = false;
+            if (v.checked) it.reviewed = 'akkoord: geen schot';
+          }
           if (withCrops) it.crop = cropImage(v, s);
           shots.push(it); gs.push(it);
         });
@@ -810,8 +837,8 @@
       var sc = shotScore(s), cert = shotCert(s), big = el('div', 'bigval', String(sc.value));
       if (sc.mouche) big.appendChild(el('small', null, 'mouche'));
       box.appendChild(big);
-      var cl = el('div', 'certline ' + (s.manual ? 'manual' : cert >= CERT_OK ? 'ok' : cert >= 0.7 ? 'mid' : 'bad'));
-      cl.textContent = s.manual ? 'Handmatig geplaatst' : 'Zekerheid ' + pct(cert) + (cert >= CERT_OK ? ' – in orde' : ' – controleer');
+      var cl = el('div', 'certline ' + (s.manual ? 'manual' : cert >= CERT_OK ? 'ok' : 'bad'));
+      cl.textContent = s.manual ? 'Handmatig geplaatst' : 'Zekerheid ' + pct(cert) + (cert >= CERT_OK ? ' – in orde' : ' – controle verplicht');
       box.appendChild(cl);
       var tb = el('table');
       row(tb, 'Afstand tot middelpunt', nl(sc.d, 2) + ' mm');
@@ -823,7 +850,7 @@
     if (ed.addMode) box.appendChild(el('p', 'hint', 'Tik op het kogelgat om het extra schot te plaatsen.'));
     v.warnings.forEach(function (w) { box.appendChild(el('div', 'vwarn', w)); });
     var lg = el('div', 'legend');
-    [['#22e07a', 'ring geraakt'], ['#ff9f1a', 'ring niet geraakt'], [COLORS.ok, '≥ 90% zeker'], [COLORS.mid, '70–90%'], [COLORS.bad, '< 70%'], [COLORS.manual, 'handmatig']].forEach(function (x) {
+    [['#22e07a', 'ring geraakt'], ['#ff9f1a', 'ring niet geraakt'], [COLORS.ok, '≥ 75% zeker'], [COLORS.bad, '< 75%: controle verplicht'], [COLORS.manual, 'handmatig']].forEach(function (x) {
       var sp = el('span'), i = el('i'); i.style.background = x[0]; sp.appendChild(i); sp.appendChild(document.createTextNode(x[1])); lg.appendChild(sp);
     });
     box.appendChild(lg);

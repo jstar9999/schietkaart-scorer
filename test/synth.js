@@ -274,8 +274,9 @@
         shots: shots.length, correct: found.length - wrong.length,
         missed: shots.length - found.length,
         falsePos: rows.reduce(function (s, r) { return s + (r.falsePositive || 0); }, 0),
-        flagged: found.filter(function (r) { return r.cert < 0.9; }).length,
-        wrongNotFlagged: wrong.filter(function (r) { return r.cert >= 0.9; }).length,
+        flagged: found.filter(function (r) { return r.cert < 0.75; }).length,
+        dagger: found.filter(function (r) { return r.cert >= 0.75 && r.cert < 0.9; }).length,
+        wrongNotFlagged: wrong.filter(function (r) { return r.cert >= 0.75; }).length,
         maxErr: found.length ? +Math.max.apply(null, found.map(function (r) { return r.err; })).toFixed(3) : null,
         z90: found.length ? +(found.filter(function (r) { return r.z < 1.645; }).length / found.length).toFixed(2) : null,
         dbg: big && res.cards[0] && res.cards[0].orientation ? res.cards[0].orientation.dbg : null
