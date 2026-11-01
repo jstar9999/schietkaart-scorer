@@ -1,1 +1,1 @@
-Groen vanaf 75% zekerheid. Daaronder is controle door de schutter verplicht: rapport, CSV en uitslag komen pas beschikbaar als alle gemarkeerde schoten gecontroleerd zijn. In het rapport: grensgevallen (75-90%) met alternatief en bereik, plus een lijst "Door schutter gecontroleerd".
+Series worden automatisch bewaard en komen terug na afsluiten; eerdere series staan onder "Opgeslagen series". Fotoreeks: na elke foto direct de score met "Akkoord, volgende foto". Foto's kiezen: 12 of 60 tegelijk, automatisch op opnametijd gesorteerd.

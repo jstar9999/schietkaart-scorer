@@ -20,6 +20,14 @@ $json.summary | Select-Object case, cards, types, order, orient, labels, shots, 
 & $edge @common '--window-size=1100,900' "--screenshot=$(Join-Path $test 'screenshot-editor.png')" ((Url (Join-Path $test 'e2e.html')) + '?editor=1') 2>$null | Out-Null
 # Desktop-Edge heeft een minimale vensterbreedte; daarom een iframe van 390 px.
 & $edge @common '--window-size=600,1700' "--screenshot=$(Join-Path $test 'screenshot-mobile.png')" (Url (Join-Path $test 'mobile.html')) 2>$null | Out-Null
+# Resultaatscherm na een camerafoto
+& $edge @common '--window-size=1100,900' "--screenshot=$(Join-Path $test 'screenshot-sheet.png')" ((Url (Join-Path $test 'e2e.html')) + '?sheet=1') 2>$null | Out-Null
+
+# Opslag: verwerken, bewaren, herladen, vergelijken
+$p = & $edge @common --dump-dom ((Url (Join-Path $test 'e2e.html')) + '?persist=1') 2>$null | Out-String
+$m = [regex]::Match($p, 'PERSIST \w+[^<]*?kaarten na herladen: \d+')
+if ($m.Success) { $m.Value } else { 'PERSIST: geen uitvoer' }
+
 # Voorbeeldrapport als PDF
 & $edge @common '--no-pdf-header-footer' "--print-to-pdf=$(Join-Path $test 'rapport-voorbeeld.pdf')" ((Url (Join-Path $test 'e2e.html')) + '?report=1') 2>$null | Out-Null
 "Screenshots en rapport-voorbeeld.pdf in $test"

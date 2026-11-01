@@ -91,9 +91,12 @@
     });
   }
 
-  // Opnamedatum uit EXIF (DateTimeOriginal), anders de bestandsdatum. Resultaat: 'JJJJ-MM-DD'.
-  function photoDate(file) {
-    function fallback() { var d = new Date(file.lastModified || Date.now()); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function isoDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+  /* Opnametijd uit EXIF (DateTimeOriginal), anders de bestandsdatum.
+     Resultaat: { date: 'JJJJ-MM-DD', time: ms } — time bepaalt de volgorde bij meerdere foto's tegelijk. */
+  function photoStamp(file) {
+    function fallback() { var d = new Date(file.lastModified || Date.now()); return { date: isoDate(d), time: d.getTime() }; }
     if (!file.slice || !file.slice(0, 1).arrayBuffer) return Promise.resolve(fallback());
     return file.slice(0, 256 * 1024).arrayBuffer().then(function (buf) {
       try {
@@ -102,13 +105,21 @@
         while (off + 10 < v.byteLength) {
           var marker = v.getUint16(off), len = v.getUint16(off + 2);
           if ((marker & 0xFF00) !== 0xFF00) break;
-          if (marker === 0xFFE1 && v.getUint32(off + 4) === 0x45786966) return exifDate(v, off + 10) || fallback();
+          if (marker === 0xFFE1 && v.getUint32(off + 4) === 0x45786966) {
+            var s = exifDate(v, off + 10), m = s && /^(\d{4}):(\d{2}):(\d{2})(?: (\d{2}):(\d{2}):(\d{2}))?/.exec(s);
+            if (m && m[1] !== '0000') {
+              return { date: m[1] + '-' + m[2] + '-' + m[3], time: new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime() };
+            }
+            return fallback();
+          }
           off += 2 + len;
         }
       } catch (e) { /* kapotte EXIF */ }
       return fallback();
     }, fallback);
   }
+
+  // Ruwe EXIF-tekst 'JJJJ:MM:DD UU:MM:SS' van de opname (of null).
   function exifDate(v, t) {
     var le = v.getUint16(t) === 0x4949;
     function u16(o) { return v.getUint16(t + o, le); }
@@ -120,8 +131,7 @@
     if (e < 0) return null;
     var cnt = u32(e + 4), o = cnt > 4 ? u32(e + 8) : e + 8, s = '';
     for (var i = 0; i < Math.min(cnt, 20); i++) s += String.fromCharCode(v.getUint8(t + o + i));
-    var m = /^(\d{4}):(\d{2}):(\d{2})/.exec(s);
-    return m && m[1] !== '0000' ? m[1] + '-' + m[2] + '-' + m[3] : null;
+    return s;
   }
 
   function drawScaled(img, maxSide) {
@@ -136,20 +146,23 @@
 
   function imageDataOf(cv) { return cv.getContext('2d').getImageData(0, 0, cv.width, cv.height); }
 
+  // Beeld <-> JPEG-tekst (data-URL): zo kunnen uitsneden en overzichtsfoto's mee in de opgeslagen serie.
+  function imgFromData(data) {
+    return new Promise(function (res) {
+      if (!data) { res(null); return; }
+      var img = new Image();
+      img.onload = function () { res(img); };
+      img.onerror = function () { res(null); };
+      img.src = data;
+    });
+  }
+
   function roiToImage(roi) {
     var cv = document.createElement('canvas');
     cv.width = roi.N; cv.height = roi.N;
     cv.getContext('2d').putImageData(new ImageData(roi.rgba, roi.N, roi.N), 0, 0);
-    return new Promise(function (res) {
-      if (!cv.toBlob) { res(cv); return; }
-      cv.toBlob(function (blob) {
-        if (!blob) { res(cv); return; }
-        var img = new Image();
-        img.onload = function () { res(img); };
-        img.onerror = function () { res(cv); };
-        img.src = URL.createObjectURL(blob);
-      }, 'image/jpeg', 0.92);
-    });
+    var data = cv.toDataURL('image/jpeg', 0.88);
+    return imgFromData(data).then(function (img) { return { img: img || cv, data: data }; });
   }
 
   // 90° rechtsom draaien van een uitsnede (bij handmatig draaien van een kaart).
@@ -160,6 +173,8 @@
     g.translate(n / 2, n / 2); g.rotate(Math.PI / 2); g.drawImage(img, -n / 2, -n / 2);
     return cv;
   }
+
+  function withData(th) { if (th && th.canvas && !th.data) th.data = th.canvas.toDataURL('image/jpeg', 0.82); return th; }
 
   // Uitsnede van de foto rond de kaart, voor het overzicht.
   function cardThumb(full, visuals) {
@@ -184,23 +199,34 @@
     return best;
   }
 
-  function enqueue(files) {
+  /* Foto's in de wachtrij zetten. Meerdere tegelijk gekozen (bijv. 12 of 60): op opnametijd sorteren, zodat
+     de volgorde van fotograferen de kaartvolgorde wordt. Geeft een promise die klaar is als alles verwerkt is. */
+  function enqueue(files, opts) {
     // Lege type toestaan: sommige Android-galerijen geven geen MIME-type door.
-    Array.prototype.forEach.call(files, function (f) { if (!f.type || /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic)$/i.test(f.name)) state.queue.push(f); });
-    if (!state.busy) processQueue();
+    var list = Array.prototype.filter.call(files, function (f) { return !f.type || /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic)$/i.test(f.name); });
+    if (!list.length) return Promise.resolve();
+    var camera = !!(opts && opts.camera);
+    return Promise.all(list.map(function (f) { return photoStamp(f).then(function (s) { f._stamp = s; f._camera = camera; return f; }); }))
+      .then(function (fs) {
+        if (fs.length > 1) fs.sort(function (a, b) { return (a._stamp.time - b._stamp.time) || a.name.localeCompare(b.name, 'nl', { numeric: true }); });
+        fs.forEach(function (f) { state.queue.push(f); });
+        if (!state.busy) state.queueDone = processQueue();
+        return state.queueDone;
+      });
   }
 
   async function processQueue() {
     state.busy = true;
     var prog = $('progress'), done = 0;
     while (state.queue.length) {
-      var file = state.queue.shift(), total = done + 1 + state.queue.length;
+      var file = state.queue.shift(), total = done + 1 + state.queue.length, before = state.cards.length;
       prog.textContent = 'Foto ' + (done + 1) + ' van ' + total + ' wordt gelezen …';
       prog.classList.remove('hidden');
       await nextFrame();
       try { await processFile(file); } catch (e) { addErrorCard(file.name, e.message || String(e)); console.error(e); }
       done++;
       renderAll();
+      if (file._camera && !state.queue.length) showShotSheet(state.cards.slice(before));
     }
     prog.classList.add('hidden');
     state.busy = false;
@@ -208,7 +234,7 @@
 
   async function processFile(file) {
     var photoNo = ++state.photos;
-    var date = await photoDate(file);
+    var date = (file._stamp || await photoStamp(file)).date;
     var img = await loadImage(file);
     var fullCv = drawScaled(img, FULL_MAX), workCv = drawScaled(img, WORK_MAX);
     var res = D.analyzePhoto(imageDataOf(fullCv), imageDataOf(workCv), { mode: state.series === '60x1' ? '1' : 'auto' });
@@ -223,9 +249,10 @@
         var shots = v.holes.map(function (h) {
           return { u: h.u, v: h.v, sigma: h.sigma, pDetect: h.pDetect, conf: h.conf, radius: h.radius, manual: false };
         });
+        var roiImg = await roiToImage(v.roi);
         visuals.push({
           label: v.label, cardPos: v.cardPos, map: v.map, cx: v.cx, cy: v.cy, pxPerMm: v.pxPerMm,
-          roiImg: await roiToImage(v.roi), roiScale: v.roi.scale, half: v.roi.half,
+          roiImg: roiImg.img, roiData: roiImg.data, roiScale: v.roi.scale, half: v.roi.half,
           warnings: v.warnings, shots: shots, auto: shots.map(function (s) { return Object.assign({}, s); }), checked: false
         });
       }
@@ -234,7 +261,7 @@
         id: ++state.seq, photoNo: photoNo,
         file: file.name + (res.cards.length > 1 ? ' #' + (k + 1) : ''),
         type: c.type, partial: c.partial, orientation: c.orientation, sighter: false, date: date,
-        thumb: big ? cardThumb(fullCv, visuals) : null,
+        thumb: big ? withData(cardThumb(fullCv, visuals)) : null,
         thumbRot: big && c.quincunx ? uprightTurns(visuals[Math.min(2, visuals.length - 1)]) : 0,
         visuals: visuals, warnings: c.warnings
       });
@@ -242,7 +269,7 @@
   }
 
   function addErrorCard(name, msg, thumbCanvas) {
-    state.cards.push({ id: ++state.seq, file: name, error: msg, visuals: [], thumb: thumbCanvas ? { canvas: thumbCanvas, x0: 0, y0: 0, f: 1 } : null, thumbRot: 0, warnings: [] });
+    state.cards.push({ id: ++state.seq, file: name, error: msg, visuals: [], thumb: thumbCanvas ? withData({ canvas: thumbCanvas, x0: 0, y0: 0, f: 1 }) : null, thumbRot: 0, warnings: [] });
   }
 
   // ------------------------------------------------------------------ handmatig draaien
@@ -254,12 +281,82 @@
       v.map = { G: v.map.G, c: v.map.c, N: [-N[1], N[0], -N[3], N[2]] };
       [v.shots, v.auto].forEach(function (list) { list.forEach(function (s) { var u = s.u; s.u = -s.v; s.v = u; }); });
       if (v.cardPos) { var U = v.cardPos[0]; v.cardPos = [-v.cardPos[1], U]; v.label = D.labelFromCardPos(v.cardPos[0], v.cardPos[1]); }
-      if (v.roiImg) v.roiImg = rotateImage(v.roiImg);
+      if (v.roiImg) { v.roiImg = rotateImage(v.roiImg); v.roiData = v.roiImg.toDataURL('image/jpeg', 0.88); }
     });
     card.visuals.sort(function (a, b) { return (D.LABEL_ORDER[a.label] || 0) - (D.LABEL_ORDER[b.label] || 0); });
     card.thumbRot = ((card.thumbRot || 0) + 1) % 4;
     card.orientationManual = true;
     updateCard(card);
+  }
+
+  // ------------------------------------------------------------------ fotoreeks (camera)
+
+  /* Na elke camerafoto: resultaat van die kaart tonen met "Akkoord, volgende foto" (opent direct de camera
+     weer), "Opnieuw" (foto weggooien en opnieuw maken) of "Klaar". Zo fotografeer je een hele reeks achter elkaar. */
+  var sheetCards = [];
+
+  function showShotSheet(added) {
+    sheetCards = added;
+    if (!added.length) return;
+    var body = $('shotBody'), ser = SERIES[state.series], n = competitionCards().length, ok = added.filter(function (c) { return !c.error; });
+    body.innerHTML = '';
+    if (!ok.length) {
+      body.appendChild(el('h2', null, 'Foto niet herkend'));
+      body.appendChild(el('p', 'errmsg', added[0].error || 'Geen kaart gevonden.'));
+      body.appendChild(el('p', 'muted small', 'Tip: kaart groot in beeld, gekleurde ondergrond, geen schaduw.'));
+    }
+    ok.forEach(function (c) {
+      var t = cardTotals(c);
+      var h = el('h2', null, c.titleEl.textContent + ': ' + t.score);
+      h.appendChild(el('small', null, ' / ' + c.visuals.length * 10));
+      body.appendChild(h);
+      var row = el('div', 'mini-tiles');
+      c.visuals.forEach(function (v) {
+        var cell = el('div', 'mini' + (visualNeedsCheck(c, v) ? ' attn' : '')), cv = el('canvas');
+        cell.appendChild(cv);
+        cell.appendChild(el('div', 'mlbl', (c.type === 5 ? v.label + ' ' : '') + (v.shots.length ? v.shots.map(function (s) { return shotScore(s).value; }).join('+') : '–')));
+        row.appendChild(cell);
+        var size = Math.round(84 * dpr());
+        cv.width = size; cv.height = size;
+        drawView(cv.getContext('2d'), v, 0, 0, tileViewRadius(v), size, {});
+      });
+      body.appendChild(row);
+      if (t.check) {
+        var note = el('div', 'attention plain', t.check + (t.check === 1 ? ' visueel' : ' visuelen') + ' onder 75% zekerheid: nu of straks controleren.');
+        var now = el('button', 'btn small', 'Nu controleren');
+        now.addEventListener('click', function () {
+          closeShotSheet();
+          var vi = 0;
+          c.visuals.forEach(function (v, i) { if (!vi && visualNeedsCheck(c, v)) vi = i; });
+          openEditor(c, vi);
+        });
+        note.appendChild(document.createTextNode(' ')); note.appendChild(now);
+        body.appendChild(note);
+      }
+    });
+    var done = n >= ser.cards;
+    body.appendChild(el('div', 'sheet-progress', n + ' van ' + ser.cards + ' kaarten' + (done ? ' – reeks compleet' : '')));
+    $('shotNext').textContent = done ? 'Klaar – naar de uitslag' : '✓ Akkoord, volgende foto';
+    $('shotNext').dataset.done = done ? '1' : '';
+    $('shotSheet').classList.remove('hidden');
+  }
+
+  function closeShotSheet() { $('shotSheet').classList.add('hidden'); }
+
+  function bindShotSheet() {
+    $('shotNext').addEventListener('click', function () {
+      closeShotSheet();
+      if ($('shotNext').dataset.done) { $('summary').scrollIntoView({ behavior: 'smooth' }); return; }
+      $('pickCamera').click();
+    });
+    $('shotRetry').addEventListener('click', function () {
+      closeShotSheet();
+      sheetCards.forEach(function (c) { var i = state.cards.indexOf(c); if (i >= 0) state.cards.splice(i, 1); if (c.el) c.el.remove(); });
+      sheetCards = [];
+      renderAll();
+      $('pickCamera').click();
+    });
+    $('shotDone').addEventListener('click', closeShotSheet);
   }
 
   // ------------------------------------------------------------------ tekenen
@@ -521,6 +618,7 @@
     var warns = cardWarnings(card);
     if (card.type === 1) { card.el.title = warns.join('\n'); card.el.classList.toggle('haswarn', warns.length > 0); }
     else warns.forEach(function (w) { card.warnEl.appendChild(el('li', null, w)); });
+    scheduleSave();
   }
 
   function moveCard(card, dir) {
@@ -547,6 +645,173 @@
       updateCard(card);
     });
     renderSummary();
+    scheduleSave();
+  }
+
+  // ------------------------------------------------------------------ opslaan en herstellen
+
+  // Automatisch bewaren: na elke wijziging (vertraagd) en direct als de app naar de achtergrond gaat.
+  var saveTimer = 0;
+
+  function scheduleSave() {
+    if (state.restoring || !KS.store) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, 800);
+  }
+
+  function serializeSession() {
+    return {
+      id: state.sessionId, version: 1, series: state.series, date: state.date, dateManual: state.dateManual,
+      cards: state.cards.map(function (c) {
+        return {
+          id: c.id, photoNo: c.photoNo, file: c.file, type: c.type, partial: c.partial, orientation: c.orientation,
+          sighter: !!c.sighter, date: c.date, number: c.number || '', numberManual: !!c.numberManual,
+          orientationManual: !!c.orientationManual, warnings: c.warnings, error: c.error || null, thumbRot: c.thumbRot || 0,
+          thumb: c.thumb ? { data: withData(c.thumb).data, x0: c.thumb.x0, y0: c.thumb.y0, f: c.thumb.f } : null,
+          visuals: c.visuals.map(function (v) {
+            return {
+              label: v.label, cardPos: v.cardPos, map: v.map, cx: v.cx, cy: v.cy, pxPerMm: v.pxPerMm,
+              roi: v.roiData, roiScale: v.roiScale, half: v.half, warnings: v.warnings,
+              shots: v.shots, auto: v.auto, checked: !!v.checked
+            };
+          })
+        };
+      })
+    };
+  }
+
+  function sessionMeta() {
+    var t = { score: 0, shots: 0, check: 0 };
+    competitionCards().forEach(function (c) { var x = cardTotals(c); t.score += x.score; t.shots += x.shots; t.check += x.check; });
+    return {
+      id: state.sessionId, updated: Date.now(), date: state.date, series: state.series,
+      cards: competitionCards().length, shots: t.shots, score: t.score, check: t.check
+    };
+  }
+
+  function flushSave() {
+    clearTimeout(saveTimer);
+    if (state.restoring || !KS.store || !state.cards.length) return Promise.resolve();
+    if (!state.sessionId) state.sessionId = 's' + Date.now();
+    try { localStorage.setItem(LS_KEY + ':current', state.sessionId); } catch (e) { /* geen opslag */ }
+    return KS.store.save(serializeSession(), sessionMeta()).then(function () {
+      state.savedAt = new Date(); state.saveError = null;
+      renderSaveStatus(); renderSessions();
+    }, function (e) {
+      state.saveError = e && e.message || 'onbekende fout';
+      renderSaveStatus();
+      console.error(e);
+    });
+  }
+
+  function renderSaveStatus() {
+    var s = $('saveStatus');
+    if (!s) return;
+    if (state.saveError) { s.textContent = '⚠ Opslaan mislukt: ' + state.saveError; s.className = 'save-status bad'; }
+    else if (state.savedAt) { s.textContent = '✓ Bewaard ' + state.savedAt.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }); s.className = 'save-status'; }
+  }
+
+  async function restoreSession(sess) {
+    state.restoring = true;
+    try {
+      state.cards = []; $('cards').innerHTML = '';
+      state.sessionId = sess.id; state.date = sess.date || ''; state.dateManual = !!sess.dateManual;
+      if (SERIES[sess.series]) { state.series = sess.series; renderSeriesChoice(); }
+      state.seq = 0; state.photos = 0; state.savedAt = null;
+      for (var i = 0; i < sess.cards.length; i++) {
+        var sc = sess.cards[i], card = Object.assign({}, sc);
+        if (!card.error) delete card.error;
+        card.thumb = sc.thumb ? { canvas: await imgFromData(sc.thumb.data), data: sc.thumb.data, x0: sc.thumb.x0, y0: sc.thumb.y0, f: sc.thumb.f } : null;
+        if (card.thumb && !card.thumb.canvas) card.thumb = null;
+        card.visuals = [];
+        for (var j = 0; j < sc.visuals.length; j++) {
+          var sv = sc.visuals[j], v = Object.assign({}, sv);
+          v.roiData = sv.roi; v.roiImg = await imgFromData(sv.roi); delete v.roi;
+          card.visuals.push(v);
+        }
+        state.seq = Math.max(state.seq, card.id || 0);
+        state.photos = Math.max(state.photos, card.photoNo || 0);
+        state.cards.push(card);
+      }
+      try { localStorage.setItem(LS_KEY + ':current', sess.id); } catch (e) { /* geen opslag */ }
+      renderAll();
+    } finally {
+      state.restoring = false;
+    }
+    renderSessions();
+  }
+
+  function newSession() {
+    return flushSave().then(function () {
+      state.cards = []; state.photos = 0; state.dateManual = false; state.date = ''; state.sessionId = null; state.savedAt = null;
+      try { localStorage.removeItem(LS_KEY + ':current'); } catch (e) { /* geen opslag */ }
+      $('cards').innerHTML = '';
+      renderAll(); renderSessions();
+      window.scrollTo(0, 0);
+    });
+  }
+
+  function openSession(id) {
+    if (state.busy) { alert('Wacht tot de foto\'s verwerkt zijn.'); return; }
+    if (id === state.sessionId) return;
+    flushSave().then(function () { return KS.store.load(id); }).then(function (sess) {
+      if (!sess) { alert('Deze serie kon niet geladen worden.'); return; }
+      return restoreSession(sess).then(function () { window.scrollTo(0, 0); });
+    });
+  }
+
+  function deleteSession(id, label) {
+    if (!confirm('Serie "' + label + '" definitief verwijderen?')) return;
+    var cur = id === state.sessionId;
+    KS.store.remove(id).then(function () {
+      if (cur) { state.sessionId = null; state.cards = []; state.photos = 0; state.dateManual = false; state.date = ''; $('cards').innerHTML = '';
+        try { localStorage.removeItem(LS_KEY + ':current'); } catch (e) { /* geen opslag */ }
+        state.restoring = true; renderAll(); state.restoring = false; }
+      renderSessions();
+    });
+  }
+
+  // Lijst met opgeslagen series (onder de foto-knoppen).
+  function renderSessions() {
+    var box = $('sessions');
+    if (!box || !KS.store) return;
+    KS.store.list().then(function (idx) {
+      $('sessionsCount').textContent = idx.length ? ' (' + idx.length + ')' : '';
+      var ul = $('sessionList');
+      ul.innerHTML = '';
+      if (!idx.length) { ul.appendChild(el('li', 'muted', 'Nog geen opgeslagen series.')); return; }
+      idx.forEach(function (m) {
+        var li = el('li', m.id === state.sessionId ? 'cur' : null);
+        var label = (m.date ? fmtDate(m.date) : 'zonder datum') + ' · ' + (SERIES[m.series] ? SERIES[m.series].name : '');
+        var info = el('div', 'sess-info');
+        info.appendChild(el('b', null, label));
+        info.appendChild(el('span', null, m.score + ' uit ' + m.shots + ' schoten · ' + m.cards + ' kaart' + (m.cards === 1 ? '' : 'en') +
+          (m.check ? ' · ' + m.check + ' te controleren' : '') + (m.id === state.sessionId ? ' · huidige' : '')));
+        li.appendChild(info);
+        var acts = el('div', 'sess-acts');
+        if (m.id !== state.sessionId) {
+          var op = el('button', 'btn small', 'Openen');
+          op.addEventListener('click', function () { openSession(m.id); });
+          acts.appendChild(op);
+        }
+        var del = el('button', 'btn small', 'Verwijderen');
+        del.addEventListener('click', function () { deleteSession(m.id, label); });
+        acts.appendChild(del);
+        li.appendChild(acts);
+        ul.appendChild(li);
+      });
+    }, function () { $('sessionList').innerHTML = '<li class="muted">Opslag niet beschikbaar in deze browser.</li>'; });
+  }
+
+  // Bij het starten de laatste serie terugzetten.
+  function restoreLast() {
+    var id = null;
+    try { id = localStorage.getItem(LS_KEY + ':current'); } catch (e) { /* geen opslag */ }
+    if (!id || !KS.store) { renderSessions(); return Promise.resolve(); }
+    return KS.store.load(id).then(function (sess) {
+      if (sess && sess.cards && sess.cards.length) return restoreSession(sess);
+      renderSessions();
+    }, function () { renderSessions(); });
   }
 
   // ------------------------------------------------------------------ samenvatting
@@ -568,11 +833,14 @@
     var meta = el('div', 'sum-meta');
     var dl = el('label', 'sum-date'), di = el('input');
     di.type = 'date'; di.value = state.date;
-    di.addEventListener('change', function () { state.date = di.value; state.dateManual = true; });
+    di.addEventListener('change', function () { state.date = di.value; state.dateManual = true; scheduleSave(); });
     dl.appendChild(document.createTextNode('Datum serie ')); dl.appendChild(di);
     meta.appendChild(dl);
     meta.appendChild(el('span', 'sum-series', 'Reeks ' + ser.long));
+    var ss = el('span', 'save-status'); ss.id = 'saveStatus';
+    meta.appendChild(ss);
     box.appendChild(meta);
+    renderSaveStatus();
 
     var top = el('div', 'sum-top'), big = el('div', 'sum-total', String(tot.score));
     big.appendChild(el('small', null, ' / ' + tot.shots * 10));
@@ -615,7 +883,7 @@
     var csv = el('button', 'btn small', window.AndroidBridge ? 'Deel CSV' : 'Download CSV'); csv.addEventListener('click', function () { afterReview(downloadCsv); });
     var clr = el('button', 'btn small', 'Nieuwe serie');
     clr.addEventListener('click', function () {
-      if (confirm('Alle kaarten wissen en een nieuwe serie beginnen?')) { state.cards = []; state.photos = 0; state.dateManual = false; $('cards').innerHTML = ''; renderAll(); }
+      if (confirm('Nieuwe serie beginnen?\nDe huidige serie blijft bewaard onder "Opgeslagen series".')) newSession();
     });
     acts.appendChild(copy); acts.appendChild(csv); acts.appendChild(clr);
     box.appendChild(acts);
@@ -979,7 +1247,8 @@
   function init() {
     loadSettings();
     $('pickFiles').addEventListener('change', function (e) { enqueue(e.target.files); e.target.value = ''; });
-    $('pickCamera').addEventListener('change', function (e) { enqueue(e.target.files); e.target.value = ''; });
+    $('pickCamera').addEventListener('change', function (e) { enqueue(e.target.files, { camera: true }); e.target.value = ''; });
+    bindShotSheet();
     Array.prototype.forEach.call(document.querySelectorAll('[data-series]'), function (b) {
       b.addEventListener('click', function () { state.series = b.getAttribute('data-series'); saveSettings(); renderSeriesChoice(); renderAll(); });
     });
@@ -998,11 +1267,16 @@
       clearTimeout(resizeT);
       resizeT = setTimeout(function () { state.cards.forEach(function (c) { if (!c.error && c.el) c.visuals.forEach(drawTile); }); }, 150);
     });
+    // App naar de achtergrond of tabblad dicht: direct bewaren.
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushSave(); });
+    window.addEventListener('pagehide', function () { flushSave(); });
+    KS.app.ready = restoreLast();
   }
 
   KS.app = {
     state: state, enqueue: enqueue, openEditor: openEditor, closeEditor: closeEditor, renderAll: renderAll, resultText: resultText,
-    rotateCard: rotateCard, reportData: reportData, csvText: csvText, makeReport: makeReport
+    rotateCard: rotateCard, reportData: reportData, csvText: csvText, makeReport: makeReport,
+    flushSave: flushSave, newSession: newSession, openSession: openSession
   };
   init();
 })();

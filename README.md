@@ -21,6 +21,15 @@ Draait volledig in de browser (geen server, geen installatie). Werkt op pc en te
 8. Vink proefkaarten aan; die tellen niet mee. Vul eventueel de kaartnummers in: na kaart 1 en 2 vult de
    app de rest doorlopend aan. De naam van de schutter staat onder Instellingen.
 
+## Fotoreeks en opslaan
+
+- **Foto maken**: na elke foto verschijnt meteen de score van die kaart met "✓ Akkoord, volgende foto"
+  (camera gaat direct weer open), "↺ Opnieuw" of "Klaar". Zo fotografeer je 12 kaarten achter elkaar.
+- **Foto's kiezen**: kies alle 12 of 60 foto's in één keer; ze worden op opnametijd (EXIF) gesorteerd.
+- **Automatisch bewaren**: elke wijziging wordt opgeslagen op het apparaat (app: app-map, browser:
+  IndexedDB). Na opnieuw starten is de serie er weer. Eerdere series staan onder "Opgeslagen series";
+  "Nieuwe serie" bewaart de huidige en begint een lege.
+
 ## Uitvoer
 
 - **Rapport (PDF)**: fototelling met kop en totaalbeeld (histogram, trefbeeld, MR, ø, Best Divider), series

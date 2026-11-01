@@ -28,6 +28,8 @@
         <label class="btn primary big">📷 Foto maken<input type="file" id="pickCamera" accept="image/*" capture="environment" hidden></label>
         <label class="btn big">🖼 Foto's kiezen<input type="file" id="pickFiles" accept="image/*" multiple hidden></label>
       </div>
+      <p class="hint-line">Foto maken: na elke foto zie je meteen de score en ga je met één tik door naar de volgende kaart.
+        Foto's kiezen: selecteer alle 12 (of 60) foto's in één keer; ze worden op opnamevolgorde gezet.</p>
       <div id="drop" class="drop">of sleep foto's hierheen</div>
       <div id="progress" class="progress hidden"></div>
     </div>
@@ -40,6 +42,11 @@
         <li>Zorg voor gelijkmatig licht zonder schaduw van je telefoon of hand.</li>
       </ul>
     </details>
+    <details class="tips" id="sessions">
+      <summary>Opgeslagen series<span id="sessionsCount"></span></summary>
+      <p class="muted small">Series worden automatisch bewaard op dit apparaat. Open een eerdere serie om verder te gaan of het rapport opnieuw te maken.</p>
+      <ul id="sessionList" class="sessions"></ul>
+    </details>
     <details class="tips">
       <summary>Instellingen</summary>
       <label class="gauge">Naam schutter <input type="text" id="shooter" class="wide" placeholder="voor het rapport" autocomplete="name"></label><br>
@@ -50,6 +57,17 @@
   <section class="panel hidden" id="summary"></section>
   <section id="cards"></section>
 </main>
+
+<div id="shotSheet" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="sheet-box">
+    <div id="shotBody"></div>
+    <div class="sheet-acts">
+      <button class="btn primary big" id="shotNext">✓ Akkoord, volgende foto</button>
+      <button class="btn" id="shotRetry">↺ Opnieuw</button>
+      <button class="btn" id="shotDone">Klaar</button>
+    </div>
+  </div>
+</div>
 
 <div id="editor" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="edTitle">
   <div class="ed-box">
@@ -92,6 +110,7 @@
 <script src="js/target.js"></script>
 <script src="js/detect.js"></script>
 <script src="js/report.js"></script>
+<script src="js/store.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

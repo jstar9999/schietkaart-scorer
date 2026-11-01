@@ -42,7 +42,9 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends Activity {
     private static final int REQ_PICK = 1, REQ_CAMERA = 2;
     private static final int BRAND = 0xFF14213D, PAGE = 0xFFF3F4F7;
-    private static final String CLOSE_EDITOR_JS = "(function(){var e=document.getElementById('editor');"
+    private static final String CLOSE_EDITOR_JS = "(function(){var s=document.getElementById('shotSheet');"
+            + "if(s&&!s.classList.contains('hidden')){s.classList.add('hidden');return 1;}"
+            + "var e=document.getElementById('editor');"
             + "if(e&&!e.classList.contains('hidden')){KS.app.closeEditor();return 1;}return 0;})()";
 
     private WebView web;
@@ -299,6 +301,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        // Laatste wijzigingen bewaren voordat de app naar de achtergrond gaat.
+        web.evaluateJavascript("window.KS&&KS.app&&KS.app.flushSave&&KS.app.flushSave()", null);
         web.onPause();
         super.onPause();
     }
@@ -315,8 +319,51 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    // ------------------------------------------------------------------ opslag van series (app-map/sessies)
+
+    private File storeDir() {
+        File d = new File(getFilesDir(), "sessies");
+        if (!d.isDirectory()) //noinspection ResultOfMethodCallIgnored
+            d.mkdirs();
+        return d;
+    }
+
+    private static boolean validKey(String k) {
+        return k != null && k.matches("[A-Za-z0-9_-]{1,80}");
+    }
+
     /** Aangeroepen vanuit JavaScript als window.AndroidBridge. */
     public class Bridge {
+        /** Schrijft atomair (eerst .tmp, dan hernoemen) zodat een onderbroken save niets kapotmaakt. */
+        @JavascriptInterface
+        public boolean storeWrite(String key, String text) {
+            if (!validKey(key)) return false;
+            File dir = storeDir(), tmp = new File(dir, key + ".tmp"), dst = new File(dir, key + ".json");
+            try (OutputStream out = new FileOutputStream(tmp)) {
+                out.write(text.getBytes(StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                return false;
+            }
+            return tmp.renameTo(dst) || (dst.delete() && tmp.renameTo(dst));
+        }
+
+        @JavascriptInterface
+        public String storeRead(String key) {
+            if (!validKey(key)) return null;
+            File f = new File(storeDir(), key + ".json");
+            if (!f.isFile()) return null;
+            try (InputStream in = new java.io.FileInputStream(f)) {
+                return readAll(in);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean storeDelete(String key) {
+            return validKey(key) && new File(storeDir(), key + ".json").delete();
+        }
+
         @JavascriptInterface
         public void copyText(String text) {
             runOnUiThread(() -> {
