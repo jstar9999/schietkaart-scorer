@@ -23,6 +23,9 @@ if ($LASTEXITCODE -ne 0) { Fail 'git push' }
 
 $notesFile = Join-Path $root 'android\release-notes.txt'
 $relNotes = if ($Notes) { $Notes } elseif (Test-Path $notesFile) { (Get-Content $notesFile -Raw -Encoding UTF8).Trim() } else { "Versie $($ver.versionName)" }
-gh release create $tag (Join-Path $root 'android\dist\SchietkaartScorer.apk') (Join-Path $root 'android\dist\version.json') --title "Schietkaart Scorer $($ver.versionName)" --notes $relNotes
+# Notities via een bestand: PowerShell 5.1 geeft aanhalingstekens in argumenten niet goed door aan gh.
+$tmpNotes = Join-Path $env:TEMP 'schietkaart-release-notes.txt'
+[IO.File]::WriteAllText($tmpNotes, $relNotes, (New-Object Text.UTF8Encoding $false))
+gh release create $tag (Join-Path $root 'android\dist\SchietkaartScorer.apk') (Join-Path $root 'android\dist\version.json') --title "Schietkaart Scorer $($ver.versionName)" --notes-file $tmpNotes
 if ($LASTEXITCODE -ne 0) { Fail 'GitHub-release maken' }
 Write-Host "Gepubliceerd: $tag  ->  https://github.com/jstar9999/schietkaart-scorer/releases/latest" -ForegroundColor Green
