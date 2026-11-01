@@ -261,6 +261,7 @@
     '.page { width: 210mm; height: 296.6mm; background: #fff; position: relative; overflow: hidden; margin: 0 auto 6mm; page-break-after: always; break-after: page; }',
     '.page:last-child { page-break-after: auto; break-after: auto; }',
     '@media print { html, body { background: #fff; } .page { margin: 0; } }',
+    '@media screen and (max-width: 820px) { .page { zoom: 0.46; } }',
     '.content { position: absolute; left: 12mm; right: 12mm; top: 12mm; height: 268mm; }',
     '.foot { position: absolute; left: 12mm; right: 12mm; bottom: 7mm; display: flex; justify-content: space-between; font-size: 6.5pt; color: #888; }',
     '.head { height: 84mm; display: flex; gap: 4mm; margin-bottom: 2mm; }',

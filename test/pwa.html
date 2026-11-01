@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head><meta charset="utf-8"><title>PWA-test</title></head>
+<body>
+<pre id="out">bezig...</pre>
+<script>
+/* Controleert de service worker (via http://localhost): registreren, bestanden in de cache, versie-antwoord. */
+(async function () {
+  var log = [];
+  try {
+    var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    await navigator.serviceWorker.ready;
+    log.push('geregistreerd, scope ' + reg.scope);
+    var keys = await caches.keys();
+    log.push('caches: ' + keys.join(', '));
+    var c = await caches.open(keys[0]), entries = await c.keys();
+    log.push('in cache: ' + entries.length + ' bestanden: ' + entries.map(function (r) { return new URL(r.url).pathname; }).join(' '));
+    var v = await new Promise(function (res) {
+      navigator.serviceWorker.addEventListener('message', function (e) { res(e.data && e.data.version); });
+      reg.active.postMessage('version');
+      setTimeout(function () { res('geen antwoord'); }, 3000);
+    });
+    log.push('versie: ' + v);
+    var m = await (await fetch('/manifest.webmanifest')).json();
+    log.push('manifest: ' + m.name + ', ' + m.icons.length + ' iconen, display ' + m.display);
+  } catch (e) { log.push('FOUT: ' + e); }
+  document.getElementById('out').textContent = log.join('\n');
+  document.title = 'DONE';
+})();
+</script>
+</body>
+</html>

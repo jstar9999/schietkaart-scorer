@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14213d">
 <title>Schietkaart Scorer – KKG 12 m liggend</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -17,6 +19,10 @@
   <div id="updateBar" class="update-bar hidden">
     <span id="updateText">App-update klaar.</span>
     <button class="btn small primary" id="updateInstall">Installeren</button>
+  </div>
+  <div id="installBar" class="update-bar hidden">
+    <span>Zet Schietkaart Scorer als app op je telefoon: werkt offline en wordt automatisch bijgewerkt.</span>
+    <button class="btn small primary" id="installApp">Installeer als app</button>
   </div>
   <section class="panel" id="uploadPanel">
     <div class="step">
@@ -50,6 +56,7 @@
       <summary>Opgeslagen series<span id="sessionsCount"></span></summary>
       <p class="muted small">Series worden automatisch bewaard op dit apparaat. Open een eerdere serie om verder te gaan of het rapport opnieuw te maken.</p>
       <ul id="sessionList" class="sessions"></ul>
+      <label class="btn small">Serie importeren (.json)<input type="file" id="importSession" accept=".json,application/json" hidden></label>
     </details>
     <details class="tips">
       <summary>Instellingen</summary>

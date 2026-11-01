@@ -810,6 +810,10 @@
           op.addEventListener('click', function () { openSession(m.id); });
           acts.appendChild(op);
         }
+        var ex = el('button', 'btn small', 'Exporteren');
+        ex.title = 'Serie als bestand bewaren (back-up of overzetten naar een ander apparaat)';
+        ex.addEventListener('click', function () { exportSession(m); });
+        acts.appendChild(ex);
         var del = el('button', 'btn small', 'Verwijderen');
         del.addEventListener('click', function () { deleteSession(m.id, label); });
         acts.appendChild(del);
@@ -817,6 +821,46 @@
         ul.appendChild(li);
       });
     }, function () { $('sessionList').innerHTML = '<li class="muted">Opslag niet beschikbaar in deze browser.</li>'; });
+  }
+
+  // Serie als .json-bestand (met beelduitsneden): back-up of overzetten naar een ander apparaat / de web-app.
+  function exportSession(m) {
+    (m.id === state.sessionId ? flushSave() : Promise.resolve()).then(function () { return KS.store.load(m.id); }).then(function (sess) {
+      if (!sess) { alert('Deze serie kon niet geladen worden.'); return; }
+      shareOrDownload('serie-' + (m.date || 'zonder-datum') + '-' + m.series + '.json', 'application/json', JSON.stringify(sess));
+    });
+  }
+
+  function importSessionFile(file) {
+    if (state.busy) { alert('Wacht tot de foto\'s verwerkt zijn.'); return; }
+    var r = new FileReader();
+    r.onload = function () {
+      var sess = null;
+      try { sess = JSON.parse(r.result); } catch (e) { /* geen JSON */ }
+      if (!sess || !sess.id || !Array.isArray(sess.cards)) { alert('Dit is geen geldig seriebestand.'); return; }
+      flushSave().then(function () { return restoreSession(sess); }).then(flushSave).then(function () {
+        alert('Serie geïmporteerd: ' + competitionCards().length + ' kaarten.');
+      });
+    };
+    r.readAsText(file);
+  }
+
+  function isTouch() { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }
+
+  // Bestand delen (telefoon: deelmenu) of downloaden (pc). In de Android-app via de koppeling.
+  function shareOrDownload(name, mime, text) {
+    if (window.AndroidBridge && window.AndroidBridge.shareFile) { window.AndroidBridge.shareFile(name, mime, text); return; }
+    var file = null;
+    try { file = new File([text], name, { type: mime }); } catch (e) { /* oude browser */ }
+    if (file && isTouch() && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: name }).catch(function () { /* geannuleerd */ });
+      return;
+    }
+    var a = el('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8' }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
 
   // Bij het starten de laatste serie terugzetten.
@@ -896,7 +940,7 @@
     var rep = el('button', 'btn small', 'Rapport (PDF)'); rep.addEventListener('click', function () { afterReview(makeReport); });
     acts.appendChild(rep);
     var copy = el('button', 'btn small', 'Kopieer uitslag'); copy.addEventListener('click', function () { afterReview(copyResult); });
-    var csv = el('button', 'btn small', window.AndroidBridge ? 'Deel CSV' : 'Download CSV'); csv.addEventListener('click', function () { afterReview(downloadCsv); });
+    var csv = el('button', 'btn small', window.AndroidBridge || isTouch() ? 'Deel CSV' : 'Download CSV'); csv.addEventListener('click', function () { afterReview(downloadCsv); });
     var clr = el('button', 'btn small', 'Nieuwe serie');
     clr.addEventListener('click', function () {
       if (confirm('Nieuwe serie beginnen?\nDe huidige serie blijft bewaard onder "Opgeslagen series".')) newSession();
@@ -1029,21 +1073,14 @@
     return lines.join('\r\n') + '\r\n';
   }
 
-  function downloadCsv() {
-    var csv = csvText(), name = fileBase() + '.csv';
-    if (window.AndroidBridge) { window.AndroidBridge.shareFile(name, 'text/csv', csv); return; }
-    var a = el('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-  }
+  function downloadCsv() { shareOrDownload(fileBase() + '.csv', 'text/csv', csvText()); }
 
   // Rapport als PDF: via het printvenster ("Opslaan als PDF"); in de Android-app via het Android-printmenu.
   function makeReport() {
     if (!competitionCards().length) { alert('Nog geen kaarten om te rapporteren.'); return; }
     var html = KS.report.build(reportData(true));
     if (window.AndroidBridge && window.AndroidBridge.printHtml) { window.AndroidBridge.printHtml(html, fileBase()); return; }
+    if (isTouch()) { showReportOverlay(html, fileBase()); return; }
     var w = window.open('', '_blank');
     if (w) {
       w.document.open(); w.document.write(html); w.document.close();
@@ -1055,6 +1092,23 @@
     fr.onload = function () { setTimeout(function () { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(function () { fr.remove(); }, 60000); }, 300); };
     document.body.appendChild(fr);
     fr.srcdoc = html;
+  }
+
+  // Telefoon (web-app): rapport schermvullend tonen; de knop opent het printvenster ("Opslaan als PDF").
+  function showReportOverlay(html, name) {
+    var ov = el('div', 'report-ov'), bar = el('div', 'report-bar'), fr = el('iframe', 'report-frame');
+    var pr = el('button', 'btn small primary', 'Opslaan als PDF / printen'), cl = el('button', 'btn small', 'Sluiten');
+    bar.appendChild(pr); bar.appendChild(cl);
+    ov.appendChild(bar); ov.appendChild(fr);
+    document.body.appendChild(ov);
+    fr.srcdoc = html;
+    var oldTitle = document.title;
+    pr.addEventListener('click', function () {
+      document.title = name;   // standaard bestandsnaam van de PDF
+      try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { window.print(); }
+      setTimeout(function () { document.title = oldTitle; }, 2000);
+    });
+    cl.addEventListener('click', function () { ov.remove(); document.title = oldTitle; });
   }
 
   // ------------------------------------------------------------------ editor
@@ -1288,7 +1342,9 @@
     window.addEventListener('pagehide', function () { flushSave(); });
     KS.app.ready = restoreLast();
     $('updateInstall').addEventListener('click', function () { if (window.AndroidBridge && AndroidBridge.installUpdate) AndroidBridge.installUpdate(); });
+    $('importSession').addEventListener('change', function (e) { if (e.target.files[0]) importSessionFile(e.target.files[0]); e.target.value = ''; });
     showVersionInfo();
+    setupPwa();
     // Android: melden dat de pagina goed is opgestart (bevestigt een nieuwe, stil bijgewerkte versie).
     if (window.AndroidBridge && AndroidBridge.appReady) { try { AndroidBridge.appReady(); } catch (e) { /* oude app */ } }
   }
@@ -1307,11 +1363,63 @@
 
   /* Android vraagt dit voordat een gedownloade update actief wordt. Alleen als er niets bezig is: dan eerst
      bewaren (op Android synchroon) en ja zeggen; de pagina wordt daarna in de nieuwe versie geladen. */
-  function prepareReload() {
+  function safeToReload() {
     var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-    if (state.busy || state.queue.length || state.restoring || ed || typing || !$('shotSheet').classList.contains('hidden')) return false;
+    return !(state.busy || state.queue.length || state.restoring || ed || typing || !$('shotSheet').classList.contains('hidden') ||
+      document.querySelector('.report-ov'));
+  }
+
+  function prepareReload() {
+    if (!safeToReload()) return false;
     flushSave();
     return true;
+  }
+
+  // ------------------------------------------------------------------ geïnstalleerde web-app (PWA)
+
+  /* Service worker: offline werken en automatisch bijwerken. Een nieuwe versie wordt actief zodra er niets bezig
+     is (eerst bewaren, dan herladen); anders bij de volgende keer dat de app weer zichtbaar wordt. */
+  var installPrompt = null;
+
+  function setupPwa() {
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      installPrompt = e;
+      $('installBar').classList.remove('hidden');
+    });
+    window.addEventListener('appinstalled', function () { $('installBar').classList.add('hidden'); installPrompt = null; });
+    $('installApp').addEventListener('click', function () {
+      if (!installPrompt) return;
+      installPrompt.prompt();
+      installPrompt.userChoice.then(function () { installPrompt = null; $('installBar').classList.add('hidden'); });
+    });
+    if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost')) return;
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () { /* niet toegestaan */ });
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState !== 'visible') return;
+        reg.update().catch(function () { /* offline */ });
+        applyPwaUpdate();
+      });
+    }).catch(function () { /* geen service worker */ });
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController) { hadController = true; return; }   // eerste installatie, geen update
+      state.reloadPending = true;
+      applyPwaUpdate();
+    });
+    navigator.serviceWorker.addEventListener('message', function (e) {
+      if (!e.data || !e.data.version) return;
+      $('appVersion').textContent = ' · v' + e.data.version;
+      $('versionInfo').textContent = 'Versie ' + e.data.version + '. Updates gaan automatisch.';
+    });
+    navigator.serviceWorker.ready.then(function (reg) { if (reg.active) reg.active.postMessage('version'); });
+  }
+
+  function applyPwaUpdate() {
+    if (!state.reloadPending || state.reloading || document.visibilityState !== 'visible' || !safeToReload()) return;
+    state.reloading = true;
+    flushSave().then(function () { location.reload(); });
   }
 
   // Aangeroepen door Android als een nieuwe app-schil gedownload en gecontroleerd is (zelden nodig).

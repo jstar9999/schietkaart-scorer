@@ -17,6 +17,11 @@ if ($LASTEXITCODE -ne 0) { Fail 'APK bouwen' }
 $ver = Get-Content (Join-Path $root 'android\dist\version.json') -Raw | ConvertFrom-Json
 $tag = 'v' + $ver.versionName
 
+# Versie in de service worker: geïnstalleerde web-apps zien daaraan dat er een update is.
+$swPath = Join-Path $root 'sw.js'
+$sw = [IO.File]::ReadAllText($swPath) -replace "const VERSION = '[^']*';", "const VERSION = '$($ver.versionName)';"
+[IO.File]::WriteAllText($swPath, $sw, (New-Object Text.UTF8Encoding $false))
+
 git add -A
 git commit -q -m "Versie $($ver.versionName)" 2>$null
 git push -q origin main
