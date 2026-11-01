@@ -1298,6 +1298,7 @@
     if (!box || !window.AndroidBridge || !AndroidBridge.versionInfo) return;
     try {
       var v = JSON.parse(AndroidBridge.versionInfo());
+      $('appVersion').textContent = ' · v' + v.web;
       box.textContent = 'Versie ' + v.web + (v.app && v.app !== v.web ? ' (app ' + v.app + ')' : '') +
         (v.pendingWeb ? ' · update ' + v.pendingWeb + ' wordt bij de volgende start actief' : '') + '. Updates gaan automatisch.';
     } catch (e) { /* geen info */ }

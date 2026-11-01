@@ -1,1 +1,1 @@
-﻿Updates gaan voortaan binnen de app: nieuwe versies worden stil gedownload en bij de volgende start actief, zonder browser of meldingen.
+﻿Versienummer zichtbaar in de kop van de app (test van de stille update binnen de app).
