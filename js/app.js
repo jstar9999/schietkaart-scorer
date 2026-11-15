@@ -23,7 +23,13 @@
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function nl(x, n) { return x.toFixed(n).replace('.', ','); }
   function pct(p) { return Math.floor(p * 100) + '%'; }
-  function nextFrame() { return new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 0); }); }); }
+  // Het scherm laten bijwerken. Op de achtergrond komt er geen animatieframe; dan gaat het werk na even wachten door.
+  function nextFrame() {
+    return new Promise(function (r) {
+      requestAnimationFrame(function () { setTimeout(r, 0); });
+      setTimeout(r, 150);
+    });
+  }
   function dpr() { return window.devicePixelRatio || 1; }
   function fmtDate(iso) { if (!iso) return ''; var p = iso.split('-'); return p[2] + '-' + p[1] + '-' + p[0]; }
 
@@ -66,13 +72,19 @@
 
   // ------------------------------------------------------------------ score en zekerheid
 
-  function shotScore(s) { return T.scoreShot(Math.hypot(s.u, s.v), state.gauge, TGT); }
+  /* Waarde van een schot. Heeft de schutter het gat op de kaart met de schotmaat nagemeten (s.gauged), dan
+     beslist die; 'photo' is dan wat de foto gaf. De plek van het schot blijft staan zoals hij gevonden is. */
+  function shotScore(s) {
+    var sc = T.scoreShot(Math.hypot(s.u, s.v), state.gauge, TGT);
+    if (s.gauged == null || s.gauged === sc.value) return sc;
+    return { value: s.gauged, d: sc.d, mouche: false, toLower: null, toHigher: null, photo: sc.value };
+  }
   function shotCert(s) {
-    if (s.manual) return 1;
+    if (s.manual || s.gauged != null) return 1;
     return T.certainty(Math.hypot(s.u, s.v), s.sigma != null ? s.sigma : 0.3, state.gauge, s.pDetect != null ? s.pDetect : 0.9, TGT);
   }
   function shotColor(s) {
-    if (s.manual) return COLORS.manual;
+    if (s.manual || s.gauged != null) return COLORS.manual;
     return shotCert(s) >= CERT_OK ? COLORS.ok : COLORS.bad;
   }
 
@@ -329,7 +341,11 @@
       for (var i = 0; i < c.visuals.length; i++) {
         var v = c.visuals[i];
         var shots = v.holes.map(function (h) {
-          return { u: h.u, v: h.v, sigma: h.sigma, pDetect: h.pDetect, conf: h.conf, radius: h.radius, manual: false };
+          // fit: hoe het gat gevonden is (komt mee in het feedbackpakket, om de herkenning op af te stellen)
+          return {
+            u: h.u, v: h.v, sigma: h.sigma, pDetect: h.pDetect, conf: h.conf, radius: h.radius, manual: false,
+            fit: { kind: h.fit, method: h.method, cov: h.coverage, rms: h.rms, resp: h.response, cut: !!h.cut, sized: !!h.sized }
+          };
         });
         var roiImg = await roiToImage(v.roi);
         visuals.push({
@@ -710,7 +726,7 @@
       v.valEl.textContent = vals.length ? vals.map(function (x) { return x.value; }).join('+') : '–';
       if (vals.length === 1) {
         var s0 = v.shots[0];
-        v.subEl.textContent = nl(vals[0].d, 2) + ' mm' + (s0.manual ? ' · ✓' : ' · ' + pct(shotCert(s0)));
+        v.subEl.textContent = nl(vals[0].d, 2) + ' mm' + (s0.gauged != null ? ' · schotmaat' : s0.manual ? ' · ✓' : ' · ' + pct(shotCert(s0)));
       } else v.subEl.textContent = vals.length ? vals.length + ' schoten' : 'geen schot';
       v.tileEl.classList.toggle('mouche', vals.length === 1 && vals[0].mouche);
       var attn = visualNeedsCheck(card, v);
@@ -817,22 +833,38 @@
     else if (state.savedAt) { s.textContent = '✓ Bewaard ' + state.savedAt.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }); s.className = 'save-status'; }
   }
 
+  function isDate(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+
+  // Schoten uit een bewaarde of geïmporteerde serie: alleen wat er als schot uitziet blijft over.
+  function cleanShots(list) {
+    return (Array.isArray(list) ? list : []).filter(function (s) { return s && isFinite(s.u) && isFinite(s.v); }).map(function (s) {
+      var c = Object.assign({}, s);
+      c.u = +s.u; c.v = +s.v; c.manual = !!s.manual;
+      if (c.gauged != null && !(c.gauged === Math.round(c.gauged) && c.gauged >= 0 && c.gauged <= 10)) delete c.gauged;
+      return c;
+    });
+  }
+
   async function restoreSession(sess) {
     state.restoring = true;
     try {
       state.cards = []; $('cards').innerHTML = '';
-      state.sessionId = sess.id; state.date = sess.date || ''; state.dateManual = !!sess.dateManual;
+      state.sessionId = String(sess.id); state.date = isDate(sess.date) ? sess.date : ''; state.dateManual = !!sess.dateManual;
       if (SERIES[sess.series]) { state.series = sess.series; renderSeriesChoice(); }
       state.seq = 0; state.photos = 0; state.savedAt = null;
       for (var i = 0; i < sess.cards.length; i++) {
         var sc = sess.cards[i], card = Object.assign({}, sc);
         if (!card.error) delete card.error;
+        if (!isDate(card.date)) card.date = '';
         card.thumb = sc.thumb ? { canvas: await imgFromData(sc.thumb.data), data: sc.thumb.data, x0: sc.thumb.x0, y0: sc.thumb.y0, f: sc.thumb.f } : null;
         if (card.thumb && !card.thumb.canvas) card.thumb = null;
         card.visuals = [];
         for (var j = 0; j < sc.visuals.length; j++) {
           var sv = sc.visuals[j], v = Object.assign({}, sv);
           v.roiData = sv.roi; v.roiImg = await imgFromData(sv.roi); delete v.roi;
+          v.shots = cleanShots(sv.shots); v.auto = cleanShots(sv.auto);
+          v.label = String(sv.label || '').slice(0, 4);
+          v.warnings = Array.isArray(sv.warnings) ? sv.warnings.map(String) : [];
           card.visuals.push(v);
         }
         state.seq = Math.max(state.seq, card.id || 0);
@@ -862,13 +894,25 @@
     });
   }
 
+  // Melding als iets met de opslag of het delen misgaat (anders blijft het stil).
+  function failed(what) { return function (e) { console.error(e); alert(what + ' is niet gelukt.' + (e && e.message ? ' (' + e.message + ')' : '')); }; }
+
+  // Ziet een ingelezen bestand eruit als een serie? Zo niet, dan blijft de huidige serie staan.
+  function validSession(sess) {
+    return !!sess && typeof sess.id === 'string' && Array.isArray(sess.cards) && sess.cards.every(function (c) {
+      return c && Array.isArray(c.visuals) && c.visuals.every(function (v) {
+        return v && Array.isArray(v.shots) && typeof v.half === 'number' && typeof v.roiScale === 'number';
+      });
+    });
+  }
+
   function openSession(id) {
     if (state.busy) { alert('Wacht tot de foto\'s verwerkt zijn.'); return; }
     if (id === state.sessionId) return;
     flushSave().then(function () { return KS.store.load(id); }).then(function (sess) {
       if (!sess) { alert('Deze serie kon niet geladen worden.'); return; }
       return restoreSession(sess).then(function () { window.scrollTo(0, 0); });
-    });
+    }).catch(failed('De serie openen'));
   }
 
   function deleteSession(m, label) {
@@ -882,7 +926,7 @@
         kvSet('current', null);
         state.restoring = true; renderAll(); state.restoring = false; }
       renderSessions();
-    });
+    }).catch(failed('De serie verwijderen'));
   }
 
   // Lijst met opgeslagen series (onder de foto-knoppen).
@@ -926,7 +970,7 @@
     (m.id === state.sessionId ? flushSave() : Promise.resolve()).then(function () { return KS.store.load(m.id); }).then(function (sess) {
       if (!sess) { alert('Deze serie kon niet geladen worden.'); return; }
       shareOrDownload('serie-' + (m.date || 'zonder-datum') + '-' + m.series + '.json', 'application/json', JSON.stringify(sess));
-    });
+    }).catch(failed('De serie exporteren'));
   }
 
   function importSessionFile(file) {
@@ -935,11 +979,12 @@
     r.onload = function () {
       var sess = null;
       try { sess = JSON.parse(r.result); } catch (e) { /* geen JSON */ }
-      if (!sess || !sess.id || !Array.isArray(sess.cards)) { alert('Dit is geen geldig seriebestand.'); return; }
+      if (!validSession(sess)) { alert('Dit is geen geldig seriebestand.'); return; }
       flushSave().then(function () { return restoreSession(sess); }).then(flushSave).then(function () {
         alert('Serie geïmporteerd: ' + competitionCards().length + ' kaarten.');
-      });
+      }).catch(failed('De serie importeren'));
     };
+    r.onerror = failed('Het bestand lezen');
     r.readAsText(file);
   }
 
@@ -956,14 +1001,18 @@
     var file = null;
     try { file = new File([blob], name, { type: blob.type }); } catch (e) { /* oude browser */ }
     if (file && isTouch() && navigator.canShare && navigator.canShare({ files: [file] })) {
-      navigator.share({ files: [file], title: name }).catch(function () { /* geannuleerd */ });
+      // Geannuleerd door de gebruiker is prima; lukt delen om een andere reden niet, dan alsnog downloaden.
+      navigator.share({ files: [file], title: name }).catch(function (e) { if (!e || e.name !== 'AbortError') download(); });
       return;
     }
-    var a = el('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+    download();
+    function download() {
+      var a = el('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+    }
   }
 
   // De oude Android-app (WebView) kan alleen tekst delen; foto's en zip-bestanden gaan via de web-app.
@@ -984,7 +1033,7 @@
     KS.store.getPhoto(state.sessionId, card.photoNo).then(function (b) {
       if (!b) { alert('De foto van deze kaart is niet bewaard. Foto\'s worden bewaard vanaf deze app-versie, van de laatste ' + KEEP_PHOTO_SERIES + ' series.'); return; }
       saveBlob(fileBase() + '_' + cardTitle(card).toLowerCase().replace(/\s+/g, '-') + '_foto-' + pad2(card.photoNo) + '.jpg', b);
-    });
+    }).catch(failed('De foto ophalen'));
   }
 
   // Foto weggooien als geen kaart hem meer gebruikt.
@@ -1207,10 +1256,11 @@
           var anomaly = v.shots.length !== 1;
           if (s) {
             var sc = shotScore(s), auto = s.manual ? null : shotCert(s);
-            var validated = s.manual || v.checked;
+            var validated = s.manual || s.gauged != null || v.checked;
             it.value = sc.value; it.mouche = sc.mouche; it.d = sc.d; it.x = s.u; it.y = -s.v;
             it.boundary = !validated && auto < CERT_REPORT;
-            if (s.manual) it.reviewed = 'handmatig geplaatst';
+            if (s.gauged != null) it.reviewed = 'gemeten met schotmaat' + (sc.photo != null ? ' (foto gaf ' + sc.photo + ')' : '');
+            else if (s.manual) it.reviewed = 'handmatig geplaatst';
             else if (v.checked && (auto < CERT_OK || anomaly)) it.reviewed = 'akkoord na controle (' + pct(auto) + ')';
             if (it.boundary) {
               var down = sc.toLower !== null && (sc.toHigher === null || sc.toLower <= sc.toHigher);
@@ -1347,8 +1397,9 @@
       var sc = shotScore(s), cert = shotCert(s), big = el('div', 'bigval', String(sc.value));
       if (sc.mouche) big.appendChild(el('small', null, 'mouche'));
       box.appendChild(big);
-      var cl = el('div', 'certline ' + (s.manual ? 'manual' : cert >= CERT_OK ? 'ok' : 'bad'));
-      cl.textContent = s.manual ? 'Handmatig geplaatst' : 'Zekerheid ' + pct(cert) + (cert >= CERT_OK ? ' – in orde' : ' – controle verplicht');
+      var gauged = s.gauged != null, cl = el('div', 'certline ' + (s.manual || gauged ? 'manual' : cert >= CERT_OK ? 'ok' : 'bad'));
+      cl.textContent = gauged ? 'Schotmaat: ' + s.gauged + (sc.photo != null ? ' (foto gaf ' + sc.photo + ')' : ' – gelijk aan de foto')
+        : s.manual ? 'Handmatig geplaatst' : 'Zekerheid ' + pct(cert) + (cert >= CERT_OK ? ' – in orde' : ' – controle verplicht');
       box.appendChild(cl);
       var tb = el('table');
       row(tb, 'Afstand tot middelpunt', nl(sc.d, 2) + ' mm');
@@ -1356,11 +1407,21 @@
       if (sc.toHigher !== null) row(tb, 'Tekort voor ' + (sc.value + 1), nl(sc.toHigher, 2) + ' mm');
       if (!s.manual && s.sigma != null) row(tb, 'Meetonzekerheid', '± ' + nl(s.sigma, 2) + ' mm');
       box.appendChild(tb);
+      // Het gat op de kaart nagemeten met de schotmaat: die uitkomst gaat voor op de foto.
+      var photo = sc.photo != null ? sc.photo : sc.value, gl = el('div', 'shotlist gauge');
+      gl.appendChild(el('span', 'gauge-lbl', 'Schotmaat gebruikt? Tik de gemeten waarde aan:'));
+      [photo + 1, photo, photo - 1, s.gauged].filter(function (val, i, a) { return val != null && val >= 0 && val <= 10 && a.indexOf(val) === i; })
+        .sort(function (a, b) { return b - a; }).forEach(function (val) {
+          var b = el('button', 'btn small' + (s.gauged === val ? ' sel' : ''), String(val));
+          b.addEventListener('click', function () { setGauged(s, s.gauged === val ? null : val); });
+          gl.appendChild(b);
+        });
+      box.appendChild(gl);
     }
     if (ed.addMode) box.appendChild(el('p', 'hint', 'Tik op het kogelgat om het extra schot te plaatsen.'));
     v.warnings.forEach(function (w) { box.appendChild(el('div', 'vwarn', w)); });
     var lg = el('div', 'legend');
-    [['#22e07a', 'ring geraakt'], ['#ff9f1a', 'ring niet geraakt'], [COLORS.ok, '≥ 75% zeker'], [COLORS.bad, '< 75%: controle verplicht'], [COLORS.manual, 'handmatig']].forEach(function (x) {
+    [['#22e07a', 'ring geraakt'], ['#ff9f1a', 'ring niet geraakt'], [COLORS.ok, '≥ 75% zeker'], [COLORS.bad, '< 75%: controle verplicht'], [COLORS.manual, 'handmatig / schotmaat']].forEach(function (x) {
       var sp = el('span'), i = el('i'); i.style.background = x[0]; sp.appendChild(i); sp.appendChild(document.createTextNode(x[1])); lg.appendChild(sp);
     });
     box.appendChild(lg);
@@ -1373,6 +1434,12 @@
   }
 
   function changed() { curVisual().checked = false; renderEditor(); }
+
+  // Waarde volgens de schotmaat vastleggen (null = weer de foto laten beslissen).
+  function setGauged(s, val) {
+    if (val == null) { delete s.gauged; curVisual().checked = false; } else s.gauged = val;
+    renderEditor(); updateCard(ed.card); renderSummary();
+  }
 
   function onPointerDown(e) {
     if (!ed) return;

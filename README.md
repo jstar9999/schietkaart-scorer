@@ -13,10 +13,13 @@ Draait volledig in de browser (geen server, geen installatie). Werkt op pc en te
    gedraaid is. Herkenning via de papierrand (onder ≥ 70 mm, elders ≥ 40 mm) en de telstrook midden
    onder. Klopt het toch niet, gebruik dan "⟳ Draai".
 5. Elk schot krijgt een **zekerheid**: de kans dat de waarde klopt, op basis van de meetonzekerheid en de
-   afstand tot de ringgrens. Alleen schoten **onder 90%** en visuelen met 0 of meer dan 1 schot worden
-   rood gemarkeerd. "Controleer n schoten" loopt ze één voor één langs.
+   afstand tot de ringgrens. Vanaf **75%** is een schot groen; schoten **onder 75%** en visuelen met 0 of
+   meer dan 1 schot moet je zelf controleren. "Controleer n schoten" loopt ze één voor één langs.
 6. In de editor sleep je de schotmaat precies over het kogelgat. Groene ring = geraakt, oranje
    stippellijn = net niet gehaald. Een verplaatst schot telt als gecontroleerd.
+   Heb je het gat met een echte schotmaat gemeten, tik dan onder "Schotmaat gebruikt? Tik de gemeten
+   waarde aan:" de waarde aan. Die waarde geldt, het schot wordt blauw en in het rapport staat
+   "gemeten met schotmaat (foto gaf n)". Een grensgeval is alleen met de schotmaat te beslissen.
 7. De datum van de serie komt uit de opnamedatum van de foto (EXIF) en is aan te passen.
 8. Vink proefkaarten aan; die tellen niet mee. Vul eventueel de kaartnummers in: na kaart 1 en 2 vult de
    app de rest doorlopend aan. De naam van de schutter staat onder Instellingen.
@@ -108,21 +111,30 @@ Met d = afstand van het schotmiddelpunt tot het schijfmiddelpunt en g = halve sc
    verwachte schijf (licht of gekleurd in het zwart, afwijkend in het wit).
 4. De rand van het gat fitten met een cirkel → schotmiddelpunt → waarde. Eén schot per visueel: een
    tweede gat-achtige vlek telt niet mee (alleen een melding in de controle).
+5. De gedrukte cijfers in de ringen lopen over in een gat dat ertegenaan ligt. De app zoekt de cijfers op
+   en laat ze buiten de cirkel als het gat daardoor aantoonbaar scheef getrokken wordt. Een gat over de
+   zwarte rand wordt gefit op het deel in het zwart, met de gatmaat van de andere gaten op de foto.
 
 ## Testen
 
-`test/synth.html` maakt synthetische kaartfoto's met bekende schoten (perspectief, ruis, onscherpte,
-JPEG, verschillende ondergronden) en vergelijkt de herkenning met de waarheid.
-`powershell -ExecutionPolicy Bypass -File test\run-tests.ps1` draait dit headless in Edge en maakt
-screenshots van de app.
+- `test/synth.html` maakt synthetische kaartfoto's met bekende schoten (perspectief, ruis, onscherpte,
+  JPEG, verschillende ondergronden) en vergelijkt de herkenning met de waarheid.
+  `powershell -ExecutionPolicy Bypass -File test\run-tests.ps1` draait dit headless in Edge, test opslaan,
+  schotmaat en feedbackpakket, en maakt screenshots van de app.
+- `test\bench.ps1 [-Seed n]` meet de nauwkeurigheid op 48 foto's (252 schoten) met gaten zoals ze er echt
+  uitzien: grijze opening, gerafelde rand, cijfers in de ringen.
+- `test\echt.ps1` leest feedbackpakketten in `test\echt\` (blijft lokaal) opnieuw en vergelijkt de
+  uitkomst met wat de schutter vastlegde: schotmaat, verplaatst of akkoord.
 
-Resultaat op synthetische foto's: alle schoten correct gewaardeerd op lichte, gekleurde en
-tegenlicht-ondergrond, ook bij flink scheef fotograferen. Gemiddelde fout van het schotmiddelpunt
-0,01–0,05 mm, maximaal ca. 0,12 mm. Op donkere ondergrond worden gaten in het zwart gemist (gemeld).
+Resultaat op de gesimuleerde gaten (1764 schoten): gemiddelde fout van het schotmiddelpunt 0,07 mm,
+95% binnen 0,23 mm. Fout gewaardeerde schoten liggen vrijwel allemaal binnen 0,1 mm van een ringgrens.
+Bij een zekerheid van 90% of hoger was 1 van de 1523 schoten fout; onder 75% (verplichte controle, 8% van
+de schoten) 33 van de 135. Op donkere ondergrond worden gaten in het zwart gemist (gemeld).
 
 ## Beperkingen
 
-- Nog niet getoetst op echte foto's: echte gaten zijn rafeliger dan gesimuleerde.
+- Nog niet getoetst op echte, met de schotmaat gemeten kaarten. De cijfers hierboven komen uit simulatie en
+  gaan ervan uit dat het schotmiddelpunt het midden van de gerafelde zone is.
 - Gaten die volledig in het wit liggen, op een witte ondergrond, zijn alleen aan de loodrand te
   herkennen. Die krijgen "laag vertrouwen" en worden ter controle gemarkeerd.
 - De app telt één schot per visueel. Een echt dubbel schot in één visueel moet je in de controle zelf

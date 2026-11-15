@@ -19,12 +19,31 @@
     coarseFactor: 4,     // grove zoekkaart op roiScale/4 px per mm
     maxShotRadius: 26,   // mm, verder weg = niet bij dit visueel
     minResponse: 0.22,
+    openRadius: 0.19,    // mm, dunnere uitsteeksels aan een gat (cijfer, lijn, scheurtje) tellen niet als gatrand
+    minHoleRadius: 1.7,  // mm, een .22-gat in schijfkarton is 4 tot 5,5 mm breed
+    fixedRadius: 2.3,    // mm, gatmaat als die niet te meten is (rand maar half te zien)
+    sizeMinCov: 250,     // graden, zoveel van de omtrek moet minstens te zien zijn om de gatmaat van de foto uit af te leiden
+    whiteGain: 1.6,      // op het wit telt een afwijking zoveel keer zo zwaar bij het afbakenen van een gat
+    edgeMargin: 0.6,     // mm, randpunten zo dicht bij de rand van het zwart tellen niet mee
+    sizePartial: 0,      // 1 = ook een half zichtbaar gat met eigen maat krijgt de maat van de goed zichtbare gaten
+    radiusSlack: 0,      // mm, zoveel mag de maat van een deels zichtbaar gat afwijken van de andere gaten op de foto (0 = uit)
+    slackCov: 300,       // graden, met minder van de omtrek in beeld geldt een gat als 'deels zichtbaar'
+    cutAtEdge: 1,        // 1 = van een gat over de rand van het zwart telt alleen de rand in het zwart
+    edgeReach: 0.3,      // mm, een gat dat tot zo dicht bij de rand van het zwart komt, geldt als 'over de rand'
+    numeralRadius: 1,    // mm rond het midden van een gedrukt cijfer waar randpunten apart worden bekeken (0 = uit)
+    numeralSlack: 0.15,  // mm, zoveel mag een randpunt op een cijfer buiten de cirkel door de overige punten liggen
+    numeralGain: 0.04,   // mm, zoveel beter moet de cirkel zonder cijferpunten op de overige randpunten passen
+    gapBase: 0.45,       // zoveel van het verschil zwart-wit mag het bandje tussen 10-punt en ring 9 door onscherpte oplichten
     maxHoles: 2          // het tweede gat alleen om te waarschuwen: er telt één schot per visueel
   };
 
   var T = KS.target.KNSA12M1986;
   var R_BLACK = T.blackDiameter / 2;
   var INNER = T.innerRingRadii, OUTER = T.outerRingRadii, ALL_RINGS = INNER.concat(OUTER);
+  var R_DOT = T.tenDotDiameter / 2 + 0.12;   // de witte 10-punt (met marge): daarop is een gatrand niet te volgen
+  var R_GAP = INNER[0] - 0.22;               // tot hier loopt het smalle zwarte bandje tussen 10-punt en ring 9
+  // De cijfers 8 t/m 1 staan op de vier assen van de kaart, telkens midden tussen twee ringen.
+  var NUMERALS = INNER.concat([R_BLACK], OUTER).map(function (r, i, all) { return i ? (r + all[i - 1]) / 2 : 0; }).slice(1);
 
   function options(o) {
     var r = {}, k;
@@ -427,22 +446,85 @@
     return arr[k0] * (1 - t) + arr[(k0 + 1) % NS] * t;
   }
 
+  /* Een gat dat tegen een gedrukt cijfer aan ligt, groeit daarmee aaneen: het cijfer lijkt dan bij de gatrand
+     te horen. Waar de cijfers staan, ligt vast (op de vier assen, midden tussen de ringen); alleen de stand van
+     die assen in de uitsnede niet. Die is af te lezen aan de witte cijfers op het zwart: de hoek waaronder op al
+     die plekken tegelijk iets wits staat. Antwoord in radialen (0 tot een kwartslag), of null: geen cijfers. */
+  function numeralPhase(roi, L) {
+    var N = roi.N, sc = roi.scale, H = roi.half, nS = 180, sum = new Float32Array(nS), cnt = new Uint8Array(nS), s, k;
+    // De 8 ligt te dicht bij het midden om er een hoek uit af te lezen.
+    var radii = NUMERALS.filter(function (r) { return r > INNER[1] && r < R_BLACK; });
+    function white(u, v, B, con) {
+      var x = Math.floor((u + H) * sc), y = Math.floor((v + H) * sc), p = y * N + x;
+      if (x < 0 || y < 0 || x >= N || y >= N || !roi.valid[p]) return 0;
+      var t = (roi.gray[p] - B) / con;
+      return t < 0 ? 0 : (t > 1 ? 1 : t);
+    }
+    for (s = 0; s < nS; s++) for (k = 0; k < 4; k++) {
+      var ang = (s / nS + k) * Math.PI / 2, ct = Math.cos(ang), st = Math.sin(ang);
+      var B = levelAt(L.B, L.NS, ang), con = Math.max(levelAt(L.W, L.NS, ang) - B, 20);
+      for (var n = 0; n < radii.length; n++) {
+        var w = 0;
+        for (var dr = -0.35; dr < 0.4; dr += 0.35) for (var dt = -0.35; dt < 0.4; dt += 0.35)
+          w += white((radii[n] + dr) * ct - dt * st, (radii[n] + dr) * st + dt * ct, B, con) / 9;
+        sum[s] += w;
+        if (w >= 0.12) cnt[s]++;
+      }
+    }
+    var best = 0;
+    for (s = 1; s < nS; s++) if (sum[s] > sum[best]) best = s;
+    // Een gat ligt op hooguit een paar van die plekken; cijfers staan er op de meeste.
+    if (cnt[best] < 2 * radii.length || sum[best] - IMG.median(Array.prototype.slice.call(sum)) < 0.25 * radii.length) return null;
+    // Zwaartepunt van de piek, voor een fijnere hoek dan de stapgrootte.
+    var floor = 0.5 * sum[best], m0 = 0, m1 = 0;
+    for (k = -6; k <= 6; k++) {
+      var wgt = Math.max(0, sum[(best + k + nS) % nS] - floor);
+      m0 += wgt; m1 += wgt * k;
+    }
+    return (best + m1 / m0) / nS * Math.PI / 2;
+  }
+
+  // Ligt (u,v) op een gedrukt cijfer? phase = stand van de kaartassen in de uitsnede (numeralPhase).
+  function onNumeral(u, v, phase, rho) {
+    var r = Math.hypot(u, v), t = Math.atan2(v, u) - phase;
+    t -= Math.round(t / (Math.PI / 2)) * (Math.PI / 2);
+    var along = r * Math.cos(t), across = r * Math.sin(t);
+    for (var k = 0; k < NUMERALS.length; k++) if (Math.hypot(along - NUMERALS[k], across) < rho) return true;
+    return false;
+  }
+
   // a in [0,1]: hoe sterk wijkt een pixel af van wat de schijf daar zou moeten tonen. -1 = niet bruikbaar
   // (buiten beeld, op een ringlijn, op de rand van het zwart of op de witte 10-punt).
   function computeAnomaly(roi, L, o) {
     var N = roi.N, sc = roi.scale, H = roi.half, a = new Float32Array(N * N);
-    var cInk = L.cInk + 14, cPap = L.cPaper + 14, rMax = o.maxShotRadius + 0.5;
-    for (var j = 0; j < N; j++) {
-      var v = (j + 0.5) / sc - H;
-      for (var i = 0; i < N; i++) {
-        var p = j * N + i;
+    var cInk = L.cInk + 14, cPap = L.cPaper + 14, rMax = o.maxShotRadius + 0.5, i, j, k, p, u, v, r;
+    /* Het zwarte bandje tussen de 10-punt en ring 9 is zo smal dat het op een onscherpe foto grijs wordt. Wat
+       daar 'zwart' is, lezen we daarom af uit het bandje zelf: per straal het donkerste deel rondom (een gat
+       maakt het lichter). Begrensd, zodat een bandje dat helemaal onder een gat ligt niet voor zwart doorgaat. */
+    var nb = Math.ceil(R_GAP * sc) + 1, bins = [], base = new Float32Array(nb), c0 = Math.floor((H - R_GAP) * sc), c1 = Math.ceil((H + R_GAP) * sc);
+    for (k = 0; k < nb; k++) bins.push([]);
+    for (j = Math.max(0, c0); j <= Math.min(N - 1, c1); j++) for (i = Math.max(0, c0); i <= Math.min(N - 1, c1); i++) {
+      p = j * N + i; u = (i + 0.5) / sc - H; v = (j + 0.5) / sc - H; r = Math.sqrt(u * u + v * v);
+      if (!roi.valid[p] || r < R_DOT || r >= R_GAP) continue;
+      var a0 = Math.atan2(v, u), B0 = levelAt(L.B, L.NS, a0);
+      bins[Math.floor(r * sc)].push((roi.gray[p] - B0) / Math.max(levelAt(L.W, L.NS, a0) - B0, 20));
+    }
+    for (k = 0; k < nb; k++) if (bins[k].length >= 8) {
+      bins[k].sort(function (x, y) { return x - y; });
+      base[k] = Math.max(0, Math.min(o.gapBase, bins[k][Math.floor(0.2 * bins[k].length)]));
+    }
+    for (j = 0; j < N; j++) {
+      v = (j + 0.5) / sc - H;
+      for (i = 0; i < N; i++) {
+        p = j * N + i;
         if (!roi.valid[p]) { a[p] = -1; continue; }
-        var u = (i + 0.5) / sc - H, r = Math.sqrt(u * u + v * v);
-        if (r > rMax || r < 0.95 || Math.abs(r - R_BLACK) < 0.32 || nearAny(r, ALL_RINGS, 0.22)) { a[p] = -1; continue; }
+        u = (i + 0.5) / sc - H; r = Math.sqrt(u * u + v * v);
+        if (r > rMax || r < R_DOT || Math.abs(r - R_BLACK) < 0.32 || nearAny(r, ALL_RINGS, 0.22)) { a[p] = -1; continue; }
         var ang = Math.atan2(v, u), B = levelAt(L.B, L.NS, ang), W = levelAt(L.W, L.NS, ang);
         var con = Math.max(W - B, 20), g = roi.gray[p], dev, ac;
         if (r < R_BLACK) {
           dev = (g - B) / con;
+          if (r < R_GAP) { k = Math.floor(r * sc); dev = (dev - base[k]) / (1 - base[k]); }
           ac = (roi.chroma[p] - cInk) / 40;
         } else {
           dev = Math.max((W - g) / con, (g - W) / Math.max(255 - W, 40));
@@ -466,7 +548,7 @@
     return offs;
   }
 
-  function findHoles(roi, a, o) {
+  function findHoles(roi, a, af, o) {
     var N = roi.N, f = o.coarseFactor, M = Math.floor(N / f), cs = roi.scale / f, H = roi.half, i, j, x, y;
     var ca = new Float32Array(M * M), cw = new Float32Array(M * M);
     for (j = 0; j < M; j++) for (i = 0; i < M; i++) {
@@ -517,7 +599,7 @@
       var method = meth[bi] === 2 ? 'rand' : 'vlak';
       if (h > 0 && method === 'rand' && bv < 0.35) break;
       var u0 = (bi % M + 0.5) / cs - H, v0 = (Math.floor(bi / M) + 0.5) / cs - H;
-      var hole = refineHole(roi, a, u0, v0, method);
+      var hole = refineHole(roi, a, af, u0, v0, method, o);
       hole.response = bv;
       hole.method = method;
       holes.push(hole);
@@ -534,62 +616,215 @@
     return holes;
   }
 
-  // Gatrand langs 72 stralen zoeken en een cirkel fitten.
-  function refineHole(roi, a, u0, v0, method) {
-    var N = roi.N, sc = roi.scale, H = roi.half, pts = [], nA = 72, step = 0.5 / sc;
-    function aAt(u, v) {
-      var ci = Math.round((u + H) * sc - 0.5), cj = Math.round((v + H) * sc - 0.5), s = 0, n = 0;
-      for (var dj = -1; dj <= 1; dj++) for (var di = -1; di <= 1; di++) {
-        var ii = ci + di, jj = cj + dj;
-        if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
-        var val = a[jj * N + ii];
-        if (val >= 0) { s += val; n++; }
+  /* De overgeslagen stroken (ringlijnen, rand van het zwart, 10-punt) invullen met wat er aan weerszijden van
+     ligt, zodat een gat dat over een lijn heen ligt één geheel blijft. Als gatrand tellen ze niet mee. */
+  function fillMasked(roi, a, o) {
+    var N = roi.N, sc = roi.scale, H = roi.half, af = new Float32Array(a), rMax = o.maxShotRadius + 0.5;
+    function probe(u, v, r, dir) {
+      for (var k = 1; k <= 22; k++) {
+        var f = (r + dir * k / sc) / r;
+        if (f <= 0) return -1;
+        var x = Math.floor((u * f + H) * sc), y = Math.floor((v * f + H) * sc);
+        if (x < 0 || y < 0 || x >= N || y >= N) return -1;
+        if (a[y * N + x] >= 0) return a[y * N + x];
       }
-      return n >= 3 ? s / n : -1;
+      return -1;
     }
-    for (var k = 0; k < nA; k++) {
-      var t = 2 * Math.PI * k / nA, ct = Math.cos(t), st = Math.sin(t), r, val;
-      if (method === 'rand') {
-        var bestR = -1, bestV = 0.35;
-        for (r = 1.5; r <= 4.0; r += step) {
-          val = aAt(u0 + r * ct, v0 + r * st);
-          if (val > bestV) { bestV = val; bestR = r; }
+    for (var j = 0; j < N; j++) {
+      var v = (j + 0.5) / sc - H;
+      for (var i = 0; i < N; i++) {
+        var p = j * N + i;
+        if (a[p] >= 0 || !roi.valid[p]) continue;
+        var u = (i + 0.5) / sc - H, r = Math.sqrt(u * u + v * v);
+        if (r > rMax || r < 0.05) continue;
+        var out = probe(u, v, r, 1), inn = r < R_DOT ? out : probe(u, v, r, -1);
+        af[p] = inn < 0 || out < 0 ? -1 : Math.min(inn, out);
+      }
+    }
+    return af;
+  }
+
+  function discOffsets(rad) {
+    var R = Math.floor(rad), offs = [];
+    for (var dy = -R; dy <= R; dy++) for (var dx = -R; dx <= R; dx++) if (dx * dx + dy * dy <= rad * rad) offs.push(dx, dy);
+    return offs;
+  }
+
+  // Erosie (erode = true) of dilatatie van een n x n masker met een schijfje.
+  function morph(m, n, offs, erode) {
+    var out = new Uint8Array(n * n);
+    for (var j = 0; j < n; j++) for (var i = 0; i < n; i++) {
+      var hit = erode ? 1 : 0;
+      for (var k = 0; k < offs.length; k += 2) {
+        var x = i + offs[k], y = j + offs[k + 1], val = x >= 0 && y >= 0 && x < n && y < n ? m[y * n + x] : 0;
+        if (erode ? !val : val) { hit = erode ? 0 : 1; break; }
+      }
+      out[j * n + i] = hit;
+    }
+    return out;
+  }
+
+  // Alleen de aaneengesloten delen van het masker die binnen `rad` pixels van (ci,cj) beginnen.
+  function component(m, n, ci, cj, rad) {
+    var out = new Uint8Array(n * n), stack = [], x, y, p;
+    for (y = Math.max(0, Math.floor(cj - rad)); y <= Math.min(n - 1, Math.ceil(cj + rad)); y++)
+      for (x = Math.max(0, Math.floor(ci - rad)); x <= Math.min(n - 1, Math.ceil(ci + rad)); x++) {
+        p = y * n + x;
+        if (m[p] && !out[p] && (x - ci) * (x - ci) + (y - cj) * (y - cj) <= rad * rad) { out[p] = 1; stack.push(p); }
+      }
+    while (stack.length) {
+      p = stack.pop(); x = p % n; y = (p - x) / n;
+      if (x > 0 && m[p - 1] && !out[p - 1]) { out[p - 1] = 1; stack.push(p - 1); }
+      if (x < n - 1 && m[p + 1] && !out[p + 1]) { out[p + 1] = 1; stack.push(p + 1); }
+      if (y > 0 && m[p - n] && !out[p - n]) { out[p - n] = 1; stack.push(p - n); }
+      if (y < n - 1 && m[p + n] && !out[p + n]) { out[p + n] = 1; stack.push(p + n); }
+    }
+    return out;
+  }
+
+  // Welk deel van de omtrek (graden) is door de gebruikte randpunten gedekt?
+  function arcCoverage(pts, fit) {
+    var angs = [];
+    pts.forEach(function (p, i) { if (fit.weights[i] > 0) angs.push(Math.atan2(p.v - fit.cy, p.u - fit.cx)); });
+    if (!angs.length) return 0;
+    angs.sort(function (a1, a2) { return a1 - a2; });
+    var gap = angs[0] + 2 * Math.PI - angs[angs.length - 1];
+    for (var gi = 1; gi < angs.length; gi++) gap = Math.max(gap, angs[gi] - angs[gi - 1]);
+    return Math.round(360 - gap * 180 / Math.PI);
+  }
+
+  /* Middelpunt van het gat. Een .22-gat is geen nette cirkel: een opening met daaromheen ingescheurde flapjes,
+     vaak tegen een gedrukt cijfer of een ringlijn aan. Daarom: eerst het vlak van het gat afbakenen, dunne
+     uitsteeksels (cijfers, lijnen, scheurtjes) eraf halen, dan langs stralen de buitenrand zoeken en daar een
+     cirkel door leggen. */
+  function refineHole(roi, a, af, u0, v0, method, o) {
+    var N = roi.N, sc = roi.scale, H = roi.half, TH = 0.5, WIN = 5.5, step = 0.5 / sc, i, j;
+    var n = Math.round(2 * WIN * sc), i0 = Math.round((u0 + H - WIN) * sc), j0 = Math.round((v0 + H - WIN) * sc);
+    var s = new Float32Array(n * n), m = new Uint8Array(n * n);
+    for (j = 0; j < n; j++) for (i = 0; i < n; i++) {
+      var ii = i0 + i, jj = j0 + j, q = j * n + i, sum = 0, cnt = 0;
+      if (ii < 1 || jj < 1 || ii >= N - 1 || jj >= N - 1 || af[jj * N + ii] < 0) { s[q] = -1; continue; }
+      for (var dj = -1; dj <= 1; dj++) for (var di = -1; di <= 1; di++) {
+        var val = af[(jj + dj) * N + ii + di];
+        if (val >= 0) { sum += val; cnt++; }
+      }
+      s[q] = sum / cnt;
+      // Opgestuwd papier valt op het wit veel minder op dan op het zwart: daar telt een kleinere afwijking al mee.
+      var pu = (ii + 0.5) / sc - H, pv = (jj + 0.5) / sc - H;
+      if (pu * pu + pv * pv > R_BLACK * R_BLACK) s[q] = Math.min(1, s[q] * o.whiteGain);
+      if (s[q] >= TH) m[q] = 1;
+    }
+    // Alleen het vlak dat aan het gevonden gat vastzit: losse vlekken en cijfers ernaast doen niet mee.
+    var offs = discOffsets(o.openRadius * sc);
+    var open = component(morph(morph(m, n, offs, true), n, offs, false), n, (u0 + H) * sc - i0, (v0 + H) * sc - j0, 2 * sc);
+
+    function cell(u, v) {
+      var x = Math.floor((u + H) * sc) - i0, y = Math.floor((v + H) * sc) - j0;
+      return x < 0 || y < 0 || x >= n || y >= n ? -1 : y * n + x;
+    }
+    function masked(u, v) {
+      var x = Math.floor((u + H) * sc), y = Math.floor((v + H) * sc), p = y * N + x;
+      return x < 1 || y < 1 || x >= N - 1 || y >= N - 1 || a[p] < 0 || a[p - 1] < 0 || a[p + 1] < 0 || a[p - N] < 0 || a[p + N] < 0;
+    }
+    // Buitenrand van het vlak langs 90 stralen vanuit (cu,cv): het verste punt van het vlak, zodat een opening
+    // waardoor je een donkere ondergrond ziet (en die dus op het zwart lijkt) niet als rand wordt aangezien.
+    function outline(cu, cv) {
+      var pts = [], nA = 90, R_SCAN = 4.6;
+      for (var k = 0; k < nA; k++) {
+        var t = 2 * Math.PI * k / nA, ct = Math.cos(t), st = Math.sin(t), last = -1, r, c;
+        for (r = 0; r <= R_SCAN; r += step) {
+          c = cell(cu + r * ct, cv + r * st);
+          if (c < 0) break;
+          if (open[c]) last = r;
+        }
+        if (last < 0 || last > R_SCAN - 2 * step) continue;
+        var r1 = last + step, c0 = cell(cu + last * ct, cv + last * st), c1 = cell(cu + r1 * ct, cv + r1 * st);
+        if (c1 < 0) continue;
+        var s0 = s[c0], s1 = s[c1], rb = last + step / 2;
+        if (s0 >= TH && s1 >= 0 && s1 < TH) rb = last + step * (s0 - TH) / (s0 - s1);
+        // Op of tegen een overgeslagen strook is de rand niet te zien, en vlak langs de rand van het zwart is
+        // het de vraag of je het gat ziet of die rand: zulke punten tellen niet mee.
+        var bu = cu + rb * ct, bv = cv + rb * st;
+        if (masked(bu, bv) || masked(cu + (r1 + step) * ct, cv + (r1 + step) * st)) continue;
+        if (Math.abs(Math.hypot(bu, bv) - R_BLACK) < o.edgeMargin) continue;
+        pts.push({ u: bu, v: bv, num: roi.phase != null && onNumeral(bu, bv, roi.phase, o.numeralRadius) });
+      }
+      return pts;
+    }
+    // Dunne ring zonder vlak (alleen een veegrand zichtbaar): de sterkste afwijking langs elke straal.
+    function ridge() {
+      var pts = [];
+      for (var k = 0; k < 72; k++) {
+        var t = 2 * Math.PI * k / 72, ct = Math.cos(t), st = Math.sin(t), bestR = -1, bestV = 0.35;
+        for (var r = 1.5; r <= 4.0; r += step) {
+          var c = cell(u0 + r * ct, v0 + r * st), val = c < 0 ? -1 : s[c];
+          if (val <= bestV || masked(u0 + r * ct, v0 + r * st)) continue;
+          if (roi.phase != null && onNumeral(u0 + r * ct, v0 + r * st, roi.phase, o.numeralRadius)) continue;
+          bestV = val; bestR = r;
         }
         if (bestR > 0) pts.push({ u: u0 + bestR * ct, v: v0 + bestR * st });
-      } else {
-        var inside = false, lastIn = 0, lowRun = 0, firstLow = 0;
-        for (r = 0.2; r <= 4.8; r += step) {
-          val = aAt(u0 + r * ct, v0 + r * st);
-          if (val < 0) continue;
-          if (val >= 0.5) { inside = true; lastIn = r; lowRun = 0; }
-          else if (inside) {
-            if (!lowRun) firstLow = r;
-            if (++lowRun >= 3) { var rb = (lastIn + firstLow) / 2; pts.push({ u: u0 + rb * ct, v: v0 + rb * st }); break; }
-          } else if (r > 1.8) break;
-        }
       }
+      return pts;
     }
-    var fit = pts.length >= 12 ? IMG.fitCircle(pts, 0.04) : null, used = 'vrij';
-    var okFree = fit && fit.r >= 2.0 && fit.r <= 3.4 && fit.inliers >= 0.5 * pts.length && fit.rms < 0.25 &&
-      Math.hypot(fit.cx - u0, fit.cy - v0) < 2.5;
-    if (!okFree && pts.length >= 8) {
-      var sx = fit && Math.hypot(fit.cx - u0, fit.cy - v0) < 2.5 ? fit.cx : u0, sy = fit && Math.hypot(fit.cx - u0, fit.cy - v0) < 2.5 ? fit.cy : v0;
-      var fx = IMG.fitCircleFixed(pts, 2.7, sx, sy);
-      if (fx && Math.hypot(fx.cx - u0, fx.cy - v0) < 3) { fit = fx; used = 'vast'; okFree = true; }
+    /* Op een gedrukt cijfer is niet te zien waar het gat ophoudt en het cijfer begint: een cijfer dat aan het
+       gat vastzit, steekt er altijd buiten en trekt de cirkel naar zich toe. Daarom twee lezingen: door alle
+       randpunten, en door de punten buiten de cijfers plus de punten op een cijfer die op die cirkel liggen.
+       De tweede telt alleen als de eerste aantoonbaar slechter past op de punten die zeker gatrand zijn. */
+    function fitPoints(pts, cu, cv) {
+      var wide = fitCircleTo(pts, cu, cv), clean = pts.filter(function (p) { return !p.num; });
+      var first = clean.length < pts.length ? fitCircleTo(clean, cu, cv) : null;
+      if (!first) return wide;
+      var f = first.fit, keep = pts.filter(function (p) { return !p.num || Math.hypot(p.u - f.cx, p.v - f.cy) - f.r < o.numeralSlack; });
+      var narrow = (keep.length > clean.length && keep.length < pts.length && fitCircleTo(keep, cu, cv)) || first;
+      if (!wide || RANK[narrow.used] !== RANK[wide.used]) return !wide || RANK[narrow.used] > RANK[wide.used] ? narrow : wide;
+      function misfit(c) {
+        var sum = 0;
+        clean.forEach(function (p) { var e = Math.min(Math.abs(Math.hypot(p.u - c.cx, p.v - c.cy) - c.r), 0.5); sum += e * e; });
+        return Math.sqrt(sum / clean.length);
+      }
+      if (misfit(wide.fit) - misfit(narrow.fit) <= o.numeralGain) return wide;
+      narrow.wide = wide;
+      return narrow;
     }
-    var hole = { u: u0, v: v0, radius: null, rms: null, points: pts.length, fit: 'grof', elongated: false, coverage: 0 };
-    if (okFree && fit) {
-      hole.u = fit.cx; hole.v = fit.cy; hole.radius = fit.r; hole.rms = fit.rms; hole.fit = used;
-      hole.inliers = fit.inliers;
-      if (used === 'vrij' && fit.r > 3.25) hole.elongated = true;
-      // Welk deel van de gatrand is echt gezien? Een half zichtbaar gat (bijv. half in het wit op witte
-      // ondergrond) geeft een onbetrouwbaar middelpunt.
-      var angs = [];
-      pts.forEach(function (p, i) { if (fit.weights[i] > 0) angs.push(Math.atan2(p.v - fit.cy, p.u - fit.cx)); });
-      angs.sort(function (a1, a2) { return a1 - a2; });
-      var gap = angs.length ? angs[0] + 2 * Math.PI - angs[angs.length - 1] : 2 * Math.PI;
-      for (var gi = 1; gi < angs.length; gi++) gap = Math.max(gap, angs[gi] - angs[gi - 1]);
-      hole.coverage = Math.round(360 - gap * 180 / Math.PI);
+    function fitCircleTo(pts, cu, cv) {
+      var fit = pts.length >= 12 ? IMG.fitCircle(pts, 0.04) : null;
+      var near = fit && Math.hypot(fit.cx - u0, fit.cy - v0) < 2.5;
+      if (near && fit.r <= 3.4 && fit.inliers >= 0.5 * pts.length && fit.rms < 0.3) {
+        var cov = arcCoverage(pts, fit);
+        if (fit.r >= o.minHoleRadius && cov >= 200) return { fit: fit, used: 'vrij', pts: pts, coverage: cov };
+        // Alleen de opening is te zien (opgestuwd papier valt weg tegen het wit): die ligt vaak uit het midden.
+        if (fit.r >= 0.8 && fit.r < o.minHoleRadius && cov >= 250) return { fit: fit, used: 'kern', pts: pts, coverage: cov };
+      }
+      if (pts.length < 8) return null;
+      var fx = IMG.fitCircleFixed(pts, o.fixedRadius, near ? fit.cx : cu, near ? fit.cy : cv);
+      return fx && Math.hypot(fx.cx - u0, fx.cy - v0) < 3 ? { fit: fx, used: 'vast', pts: pts, coverage: arcCoverage(pts, fx) } : null;
+    }
+
+    // Opnieuw kijken vanuit het gevonden middelpunt geeft een gelijkmatiger rand. Wordt de fit daar slechter van
+    // (minder van de omtrek te zien, of geen vrije cirkel meer), dan blijft de vorige staan.
+    var RANK = { vrij: 3, kern: 2, vast: 1 }, best = null, cu = u0, cv = v0;
+    for (var it = 0; it < 3; it++) {
+      var res = fitPoints(outline(cu, cv), cu, cv);
+      if (!res || (best && (RANK[res.used] < RANK[best.used] || (res.used === best.used && res.coverage < best.coverage - 15)))) break;
+      best = res;
+      if (Math.hypot(res.fit.cx - cu, res.fit.cy - cv) < 0.03) break;
+      cu = res.fit.cx; cv = res.fit.cy;
+    }
+    if (method === 'rand' && (!best || best.used !== 'vrij')) {
+      var alt = fitPoints(ridge(), u0, v0);
+      if (alt && (!best || alt.used === 'vrij')) best = alt;
+    }
+    var hole = { u: u0, v: v0, radius: null, rms: null, points: best ? best.pts.length : 0, fit: 'grof', elongated: false, coverage: 0 };
+    if (best) {
+      var fit = best.fit;
+      hole.u = fit.cx; hole.v = fit.cy; hole.radius = fit.r; hole.rms = fit.rms; hole.fit = best.used;
+      hole.inliers = fit.inliers; hole.coverage = best.coverage;
+      if (best.used === 'vrij' && fit.r > 3.25) hole.elongated = true;
+      hole.pts = best.pts;
+      // De lezing door alle randpunten blijft erbij: of de keuze klopt, is pas te zeggen als de gatmaat van de
+      // foto bekend is (sharedRadius).
+      var w = best.used === 'vrij' && best.wide;
+      if (w) hole.alt = { u: w.fit.cx, v: w.fit.cy, radius: w.fit.r, rms: w.fit.rms, inliers: w.fit.inliers, coverage: w.coverage, pts: w.pts };
     }
     return hole;
   }
@@ -610,11 +845,16 @@
     if (h.fit === 'grof') sh = 0.5;
     else {
       sh = Math.max(0.03, 2.5 * (h.rms || 0.1) / Math.sqrt(Math.max(h.inliers || 8, 8)));
-      if (h.fit === 'vast') sh = Math.max(2 * sh, 0.25);
+      if (h.fit === 'vast') sh = Math.max(2 * sh, 0.2);
+      if (h.fit === 'kern') sh = Math.max(sh, 0.45);
       if (h.method === 'rand') sh = Math.max(2 * sh, 0.12);
-      if (h.coverage < 180) sh = Math.max(sh, 0.8);
-      else if (h.coverage < 250) sh = Math.max(sh, 0.4);
+      // Hoe minder van de omtrek te zien is, hoe onzekerder het middelpunt (afgesteld op test\bench.ps1).
+      if (h.coverage < 120) sh = Math.max(sh, 0.8);
+      else if (h.coverage < 180) sh = Math.max(sh, 0.35);
+      else if (h.coverage < 250) sh = Math.max(sh, 0.25);
       else if (h.coverage < 310) sh = Math.max(sh, 0.15);
+      // De rand past niet op een cirkel: het gat is niet goed afgebakend (cijfer, scheur of vlek doet mee).
+      if (h.rms > 0.35) sh = Math.max(sh, 1);
     }
     var sc = vis.edge ? Math.max(0.01, 2.5 * vis.edge.rms / Math.sqrt(Math.max(vis.edge.inliers, 10))) : 0.3;
     var sp = vis.perspective ? 0 : 0.04;
@@ -628,6 +868,7 @@
     if (h.method === 'rand') p = Math.min(p, 0.9);
     if (h.elongated) p = Math.min(p, 0.8);
     if (h.fit === 'grof') p = Math.min(p, 0.6);
+    if (h.fit === 'kern') p = Math.min(p, 0.85);
     // Buiten ring 1: een echte misser is zeldzaam, een rand van een embleem, tekst of de ondergrond niet.
     if (Math.hypot(h.u, h.v) > 21) p = Math.min(p, 0.6);
     return p;
@@ -639,7 +880,8 @@
     else if (ref.edge.rms > 0.15) warnings.push('Rand van het zwart onregelmatig (rms ' + ref.edge.rms.toFixed(2) + ' mm).');
     var roi = rectify(S, ref.map, o), L = estimateLevels(roi);
     if (L.contrast < 40) warnings.push('Weinig contrast tussen zwart en wit.');
-    var a = computeAnomaly(roi, L, o), holes = findHoles(roi, a, o);
+    roi.phase = o.numeralRadius ? numeralPhase(roi, L) : null;
+    var a = computeAnomaly(roi, L, o), af = fillMasked(roi, a, o), holes = findHoles(roi, a, af, o);
     // Eén schot per visueel (KNSA-kaart): een tweede 'gat' is vrijwel altijd een scheurtje, vlek of cijfer.
     var extra = holes.slice(1);
     holes = holes.slice(0, 1);
@@ -661,7 +903,60 @@
     holes.forEach(function (h) { h.conf = holeConfidence(h); h.sigma = holeSigma(h, vis); h.pDetect = holeDetectP(h); });
     if (!holes.length) warnings.push('Geen schot gevonden.');
     holes.forEach(function (h) { if (h.elongated) warnings.push('Gat is groter dan één kogel: mogelijk dubbel schot.'); });
+    if (o.debug) vis.dbg = { a: a, af: af, phase: roi.phase, numerals: NUMERALS, rho: o.numeralRadius };
     return vis;
+  }
+
+  // Komt het gat (met straal R) tot aan of over de rand van het zwart? Dan is de buitenkant van de gatrand niet te zien.
+  function straddles(h, R, o) {
+    var d = Math.hypot(h.u, h.v);
+    return !!h.radius && d + R > R_BLACK - o.edgeReach && d - R < R_BLACK - 0.3;
+  }
+
+  /* Alle schoten op een foto komen uit hetzelfde geweer in hetzelfde karton en zijn dus even groot. Een gat
+     waarvan maar een deel van de rand te zien is, krijgt daarom de maat van de goed zichtbare gaten. Dat geldt
+     ook voor een gat over de rand van het zwart: op het wit is opgestuwd papier amper te zien, dus daar telt
+     alleen de rand die in het zwart ligt. */
+  function sharedRadius(cards, o) {
+    var all = [];
+    cards.forEach(function (c) { c.visuals.forEach(function (vis) { vis.holes.forEach(function (h) { all.push({ h: h, vis: vis }); }); }); });
+    function typical(minCov) {
+      var radii = [];
+      all.forEach(function (e) { if (e.h.fit === 'vrij' && e.h.coverage >= minCov && !e.h.elongated && !straddles(e.h, e.h.radius, o)) radii.push(e.h.radius); });
+      return radii.length >= 2 ? IMG.median(radii) : null;
+    }
+    // Liefst de gaten die rondom te zien zijn; zijn dat er te weinig, dan ook de gaten waar een stuk van ontbreekt.
+    var rMed = typical(300) || typical(o.sizeMinCov), R = rMed || o.fixedRadius;
+    all.forEach(function (e) {
+      var h = e.h, w = h.alt;
+      // Een lezing zonder de punten op een cijfer telt alleen als ook de maat beter bij de andere gaten op de
+      // foto past dan die van de lezing door alle randpunten.
+      if (w && rMed && Math.abs(w.radius - rMed) <= Math.abs(h.radius - rMed)) {
+        h.u = w.u; h.v = w.v; h.radius = w.radius; h.rms = w.rms; h.inliers = w.inliers; h.coverage = w.coverage; h.pts = w.pts;
+        h.elongated = w.radius > 3.25;
+        h.sigma = holeSigma(h, e.vis);
+      }
+      delete h.alt;
+      var pts = h.pts, cut = o.cutAtEdge && straddles(h, Math.max(h.radius, R), o);
+      if (pts && cut) pts = pts.filter(function (p) { return Math.hypot(p.u, p.v) < R_BLACK; });
+      var partial = h.fit === 'vast' || (o.sizePartial && h.fit === 'vrij' && h.coverage < 300), Rh = R;
+      // Van een gat dat maar deels te zien is, hangen straal en middelpunt aan elkaar vast: wijkt de straal veel af
+      // van de andere gaten op de foto, dan is ook het middelpunt verschoven.
+      if (rMed && o.radiusSlack && !cut && h.fit === 'vrij' && h.coverage < o.slackCov && Math.abs(h.radius - rMed) > o.radiusSlack) {
+        partial = true; Rh = rMed + (h.radius > rMed ? 1 : -1) * o.radiusSlack;
+      }
+      if (pts && pts.length >= 8 && (cut || (rMed && partial))) {
+        var fx = IMG.fitCircleFixed(pts, Rh, h.u, h.v);
+        if (fx && Math.hypot(fx.cx - h.u, fx.cy - h.v) < 1.5) {
+          h.u = fx.cx; h.v = fx.cy; h.radius = Rh; h.rms = fx.rms; h.inliers = fx.inliers;
+          h.coverage = arcCoverage(pts, fx);
+          h.sized = !!rMed; h.fit = 'vast'; h.cut = !!cut;
+          h.sigma = holeSigma(h, e.vis);
+          if (o.debug) h.pts = pts;
+        }
+      }
+      if (!o.debug) delete h.pts;
+    });
   }
 
   // ---------------------------------------------------------------- kaarttype en oriëntatie
@@ -892,6 +1187,7 @@
         visuals: visuals, cx: cx / visuals.length, cy: cy / visuals.length, pxPerMm: IMG.median(ppm), warnings: cardWarnings
       };
     });
+    sharedRadius(cards, o);
     if (cards.length > 1) cards = readingOrder(cards);
     var kept = groups.reduce(function (s, g) { return s + g.discs.length; }, 0);
     return { cards: cards, warnings: [], ms: Date.now() - t0, width: full.width, height: full.height, ignoredDiscs: best.cands.length - kept };

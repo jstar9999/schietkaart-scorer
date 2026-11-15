@@ -40,7 +40,7 @@
       put: function (k, v) { return tx('readwrite', function (s) { return s.put(v, k); }); },
       get: function (k) { return tx('readonly', function (s) { return s.get(k); }); },
       del: function (k) { return tx('readwrite', function (s) { return s.delete(k); }); },
-      delPrefix: function (p) { return tx('readwrite', function (s) { return s.delete(IDBKeyRange.bound(p, p + '￿')); }); }
+      delPrefix: function (p) { return tx('readwrite', function (s) { return s.delete(IDBKeyRange.bound(p, p + '\uffff')); }); }
     };
   })();
 

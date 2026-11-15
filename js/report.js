@@ -109,7 +109,7 @@
       .slice(0, 3).map(function (x) { return nl(x * 100, 1); }).join(' ');
     var line = nb ? nb + ' grensgeval' + (nb === 1 ? '' : 'len') + '; mogelijke totaalscore ' + rangeText(rg) + '.' : 'Geen grensgevallen.';
     return '<div class="head"><div class="hl">' +
-      '<div class="hgrid"><div>' + brand() + '</div><div><div class="lbl">Datum</div><div>' + shortDate(d.date) + '</div></div>' +
+      '<div class="hgrid"><div>' + brand() + '</div><div><div class="lbl">Datum</div><div>' + esc(shortDate(d.date)) + '</div></div>' +
       '<div class="disc"><b>' + esc(d.discipline) + '</b><br>' + esc((d.shooter ? d.shooter + ' - ' : '') + longDate(d.date)) + '<br>' +
       d.cardsCount + ' kaarten / ' + d.shots.length + ' schoten</div>' +
       '<div><div class="lbl">Totale Score</div><div class="score">' + tot + (nb ? '†' : '') + '</div></div></div>' +
@@ -125,7 +125,7 @@
   function controlBlocks(d) {
     var tot = total(d.shots), rg = range(d.shots), nb = d.shots.filter(function (s) { return s.boundary; });
     var mou = d.shots.filter(function (s) { return s.mouche; }).length, blocks = [];
-    blocks.push({ h: 26, html: '<h1>Controleoverzicht - ' + longDate(d.date) + '</h1><h3>' + tot + ' / ' + d.shots.length * 10 + ' berekend' +
+    blocks.push({ h: 26, html: '<h1>Controleoverzicht - ' + esc(longDate(d.date)) + '</h1><h3>' + tot + ' / ' + d.shots.length * 10 + ' berekend' +
       (nb.length ? ' - ' + rangeText(rg) + ' bij de ' + nb.length + ' grensgevallen' : ' - geen grensgevallen') + '</h3>' +
       (d.type === 5 ? '<p>Volgorde per kaart: linksboven, rechtsboven, midden, linksonder, rechtsonder.</p>' : '<p>Volgorde: kaartnummer 1 t/m ' + d.shots.length + ', per serie van 10.</p>') });
     var rows = [], head;
@@ -153,7 +153,7 @@
       var bh = '<tr><th>Schot</th><th>Kaart / positie</th><th>CSV-score</th><th>Mogelijk</th><th>r (mm)</th><th>Ringgrens r</th></tr>';
       for (var i = 0; i < nb.length; i += 30) {
         var part = nb.slice(i, i + 30).map(function (s) {
-          return '<tr><td>' + s.no + '</td><td>' + s.card + (s.pos ? ' / ' + s.pos : '') + '</td><td>' + s.value + '</td><td>' +
+          return '<tr><td>' + s.no + '</td><td>' + s.card + (s.pos ? ' / ' + esc(s.pos) : '') + '</td><td>' + s.value + '</td><td>' +
             Math.min(s.value, s.alt) + ' of ' + Math.max(s.value, s.alt) + '</td><td>' + nl(s.d, 2) + '</td><td>' + nl(s.ringR, 2) + ' mm</td></tr>';
         });
         blocks.push({ h: (i ? 4 : 12) + 6 + part.length * 6.2, html: (i ? '' : '<h2>Grensgevallen</h2>') + '<table class="ctl">' + bh + part.join('') + '</table>' });
@@ -164,7 +164,7 @@
       var rh = '<tr><th>Schot</th><th>Kaart / positie</th><th>Score</th><th>Controle door schutter</th></tr>';
       for (var j = 0; j < rv.length; j += 30) {
         var rpart = rv.slice(j, j + 30).map(function (s) {
-          return '<tr><td>' + s.no + '</td><td>' + s.card + (s.pos ? ' / ' + s.pos : '') + '</td><td>' + s.value + '</td><td>' + esc(s.reviewed) + '</td></tr>';
+          return '<tr><td>' + s.no + '</td><td>' + s.card + (s.pos ? ' / ' + esc(s.pos) : '') + '</td><td>' + s.value + '</td><td>' + esc(s.reviewed) + '</td></tr>';
         });
         blocks.push({ h: (j ? 4 : 12) + 6 + rpart.length * 6.2, html: (j ? '' : '<h2>Door schutter gecontroleerd</h2>') + '<table class="ctl">' + rh + rpart.join('') + '</table>' });
       }

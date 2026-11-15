@@ -1,7 +1,8 @@
 /* End-to-end: voert gegenereerde foto's aan de echte app.
    ?series=60x1  -> reeks met kleine kaarten;  ?editor=1 -> editor openen op het eerste te controleren schot;
    ?report=1 -> rapport als pagina (voor --print-to-pdf);  ?sheet=1 -> camerafoto met resultaatscherm;
-   ?persist=1 -> verwerken, bewaren, pagina herladen en controleren dat de serie terugkomt. */
+   ?persist=1 -> verwerken, bewaren, pagina herladen en controleren dat de serie terugkomt;
+   ?gauge=1 -> een schot met de schotmaat vastleggen in de editor en controleren dat dat overal doorwerkt. */
 window.addEventListener('load', async function () {
   'use strict';
   var S = window.KSynth, q = location.search;
@@ -65,7 +66,31 @@ window.addEventListener('load', async function () {
     return;
   }
 
+  if (/gauge=1/.test(q)) {
+    // Schotmaat: de gemeten waarde in de editor aantikken moet doorwerken in totaal, rapport en CSV, en weer uit kunnen.
+    var gc = KS.app.state.cards.filter(function (c) { return !c.error; })[0], gs = gc.visuals[0].shots[0];
+    var first = function () { return KS.app.reportData(false).shots[0]; };
+    var total = function () { return KS.app.reportData(false).shots.reduce(function (a, s) { return a + s.value; }, 0); };
+    var tap = function (val) {
+      Array.prototype.forEach.call(document.querySelectorAll('#edInfo .gauge button'), function (b) { if (b.textContent === String(val)) b.click(); });
+    };
+    var t0 = total(), v0 = first().value, want = v0 > 0 ? v0 - 1 : 1;
+    KS.app.openEditor(gc, 0);
+    tap(want);
+    var r1 = first(), t1 = total(), csv1 = KS.app.csvText().split(/\r?\n/)[1], line1 = document.querySelector('#edInfo .certline').textContent;
+    tap(want);
+    var t2 = total(), off = gs.gauged == null;
+    tap(want);
+    var good = t1 === t0 + want - v0 && r1.value === want && !r1.boundary && r1.reviewed === 'gemeten met schotmaat (foto gaf ' + v0 + ')' &&
+      csv1.split(';')[2] === '"' + want + '"' && t2 === t0 && off && gs.gauged === want;
+    out('GAUGE ' + (good ? 'OK' : 'FOUT') + ': foto ' + v0 + ' -> schotmaat ' + want + ', totaal ' + t0 + ' -> ' + t1 + ' -> ' + t2 + ', "' + line1 + '", ' + r1.reviewed);
+    return;
+  }
+
   if (/persist=1/.test(q)) {
+    // Ook een met de schotmaat gemeten schot moet het herladen overleven.
+    var ps = KS.app.state.cards[0].visuals[0].shots[0];
+    if (ps) { ps.gauged = 7; KS.app.renderAll(); }
     await KS.app.flushSave();
     sessionStorage.setItem('e2e-before', KS.app.resultText());
     sessionStorage.setItem('e2e-phase', '2');

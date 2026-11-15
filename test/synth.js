@@ -25,10 +25,13 @@
     };
   }
 
-  function renderFlat(spec, ppm, holes) {
-    var cv = document.createElement('canvas');
+  /* look (optioneel) maakt de kaart zoals een echte (naar de controlefoto's van 1-11-2026): { line: lijndikte in mm,
+     numerals: cijfers 8..2 op alle vier de assen, paper/ink: kleuren }. Zonder look: de oude, kale tekening. */
+  function renderFlat(spec, ppm, holes, look) {
+    look = look || {};
+    var cv = document.createElement('canvas'), lw = look.line || 0.1;
     cv.width = Math.round(spec.W * ppm); cv.height = Math.round(spec.H * ppm);
-    var g = cv.getContext('2d'), paper = 'rgb(' + PAPER + ')', ink = 'rgb(' + INK + ')';
+    var g = cv.getContext('2d'), paper = 'rgb(' + (look.paper || PAPER) + ')', ink = 'rgb(' + (look.ink || INK) + ')';
     g.fillStyle = paper; g.fillRect(0, 0, cv.width, cv.height);
     g.scale(ppm, ppm);
     function circ(x, y, r, fill, stroke) {
@@ -36,13 +39,26 @@
       if (fill) { g.fillStyle = fill; g.fill(); }
       if (stroke) { g.strokeStyle = stroke; g.stroke(); }
     }
-    g.lineWidth = 0.1;
+    g.lineWidth = lw;
     spec.vis.forEach(function (c) {
       circ(c.x, c.y, 12.5, ink);
-      [15, 17.5, 20].forEach(function (R) { circ(c.x, c.y, R - 0.05, null, ink); });
-      [1.35, 3.4, 5.45, 7.5, 10].forEach(function (R) { circ(c.x, c.y, R - 0.05, null, paper); });
+      [15, 17.5, 20].forEach(function (R) { circ(c.x, c.y, R - lw / 2, null, ink); });
+      [1.35, 3.4, 5.45, 7.5, 10].forEach(function (R) { circ(c.x, c.y, R - lw / 2, null, paper); });
       circ(c.x, c.y, 0.7, paper);
-      g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '1.3px Arial';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      if (look.numerals) {
+        g.font = '2px Arial';
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (dir) {
+          [[2.375, '8'], [4.425, '7'], [6.475, '6'], [8.75, '5'], [11.25, '4']].forEach(function (z) {
+            g.fillStyle = paper; g.fillText(z[1], c.x + dir[0] * z[0], c.y + dir[1] * z[0] + 0.1);
+          });
+          [[13.75, '3'], [16.25, '2']].forEach(function (z) {
+            g.fillStyle = ink; g.fillText(z[1], c.x + dir[0] * z[0], c.y + dir[1] * z[0] + 0.1);
+          });
+        });
+        return;
+      }
+      g.font = '1.3px Arial';
       [[8.75, '5'], [11.25, '4'], [6.5, '6']].forEach(function (z) {
         g.fillStyle = paper; g.fillText(z[1], c.x, c.y - z[0]); g.fillText(z[1], c.x, c.y + z[0]);
       });
@@ -63,8 +79,48 @@
       g.fillStyle = paper; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = 'bold ' + e.font + 'px Arial';
       g.fillText(e.text, e.r ? e.x : e.x + e.w / 2, e.r ? e.y : e.y + e.h / 2);
     });
-    holes.forEach(function (h) { g.lineWidth = 0.3; circ(h.X, h.Y, h.r + 0.12, null, 'rgba(70,70,70,0.6)'); });
+    holes.forEach(function (h) { if (!h.torn) { g.lineWidth = 0.3; circ(h.X, h.Y, h.r + 0.12, null, 'rgba(70,70,70,0.6)'); } });
     return cv;
+  }
+
+  /* Gescheurd gat zoals een .22-kogel in karton achterlaat (naar echte foto's): een opening van 2 à 2,5 mm
+     waar je de ondergrond doorheen ziet, vaak uit het midden, met daaromheen opgestuwd bleek papier tot een
+     vlak van 4 à 4,5 mm. De rand is grillig, met donkere inhammen en dunne scheurtjes naar buiten. De waarheid
+     is het midden van de buitenrand zonder scheurtjes: daar ging de kogel doorheen en daar centreert een
+     schotmaat zich op. (Aanname; te toetsen aan kaarten die met de schotmaat zijn nagemeten.) */
+  function tornShape(R, r) {
+    var amp = [], ph = [], spikes = [], notches = [], k;
+    for (k = 2; k <= 7; k++) { amp.push((R() * 0.08 + 0.02) / (k - 1)); ph.push(R() * 2 * Math.PI); }
+    var nS = Math.floor(R() * 5), nN = 3 + Math.floor(R() * 6);
+    for (k = 0; k < nS; k++) spikes.push({ a: R() * 2 * Math.PI, w: 0.03 + R() * 0.04, len: 0.3 + R() * 0.7 });
+    for (k = 0; k < nN; k++) notches.push({ a: R() * 2 * Math.PI, w: 0.07 + R() * 0.1, len: 0.15 + R() * 0.4 });
+    var or = 1.0 + R() * 0.25, off = Math.max(0, R() * (r - or - 0.15)), oa = R() * 2 * Math.PI;
+    return { amp: amp, ph: ph, spikes: spikes, notches: notches, or: or, ox: off * Math.cos(oa), oy: off * Math.sin(oa), seed: R() * 100 };
+  }
+  function wedge(list, ang) {
+    var best = 0;
+    for (var k = 0; k < list.length; k++) {
+      var d = Math.abs(Math.atan2(Math.sin(ang - list[k].a), Math.cos(ang - list[k].a)));
+      if (d < list[k].w) best = Math.max(best, list[k].len * (1 - d / list[k].w));
+    }
+    return best;
+  }
+  function tornRadius(h, ang) {
+    var t = h.torn, f = 1;
+    for (var k = 0; k < t.amp.length; k++) f += t.amp[k] * Math.cos((k + 2) * ang + t.ph[k]);
+    return h.r * f + (wedge(t.spikes, ang) || -wedge(t.notches, ang));
+  }
+  function hash(ix, iy, s) { var v = Math.sin(ix * 127.1 + iy * 311.7 + s * 17.3) * 43758.5453; return v - Math.floor(v); }
+  function vnoise(x, y, s) {
+    var ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+    var a = hash(ix, iy, s), b = hash(ix + 1, iy, s), c = hash(ix, iy + 1, s), d = hash(ix + 1, iy + 1, s);
+    return a + (b - a) * fx + (c + (d - c) * fx - a - (b - a) * fx) * fy;
+  }
+  // Opgestuwd papier: vlekkerig, geen regelmatig patroon.
+  function flapColor(h, dx, dy, core) {
+    var s = h.torn.seed, f = 0.74 + 0.2 * vnoise(dx * 2.5, dy * 2.5, s) + 0.12 * vnoise(dx * 7, dy * 7, s + 3);
+    return [Math.min(255, core[0] * f), Math.min(255, core[1] * f), Math.min(255, core[2] * f)];
   }
 
   function homography(src, dst) {
@@ -87,16 +143,21 @@
     return [(H[0] * x + H[1] * y + H[2]) / w, (H[3] * x + H[4] * y + H[5]) / w];
   }
 
-  function cardHoles(R, spec, perVisual, anyMargin) {
+  /* opt: { torn: gescheurde gaten, axis: kans dat het schot vlak bij een cijferas ligt, dMax: verste schot in mm } */
+  function cardHoles(R, spec, perVisual, anyMargin, opt) {
     var holes = [];
+    opt = opt || {};
     spec.vis.forEach(function (c, vi) {
       var n = perVisual ? perVisual[vi] : 1;
       for (var k = 0; k < n; k++) {
         var d;
-        do { d = Math.pow(R(), 1.3) * 14; } while (!anyMargin && KS.target.scoreShot(d, GAUGE).margin < 0.3);
+        do { d = Math.pow(R(), 1.3) * (opt.dMax || 14); } while (!anyMargin && KS.target.scoreShot(d, GAUGE).margin < 0.3);
         if (k === 1) d = 7 + R() * 5;
         var ang = R() * 2 * Math.PI + k * Math.PI;
-        holes.push({ vis: c.l, X: c.x + d * Math.cos(ang), Y: c.y + d * Math.sin(ang), r: 2.55 + R() * 0.2, d: d });
+        if (opt.axis && R() < opt.axis) ang = Math.floor(R() * 4) * Math.PI / 2 + (R() * 2 - 1) * 0.25;
+        var h = { vis: c.l, X: c.x + d * Math.cos(ang), Y: c.y + d * Math.sin(ang), r: 2.55 + R() * 0.2, d: d, ang: ang };
+        if (opt.torn) { h.r = 2.0 + R() * 0.3; h.torn = tornShape(R, h.r); h.rMax = 1.5 * h.r + 1; }
+        holes.push(h);
       }
     });
     return holes;
@@ -106,7 +167,7 @@
   function makePhoto(cs) {
     var R = rng(cs.seed), ppm = 14, outW = cs.outW || 2000, outH = cs.outH || 2600;
     var cards = cs.cards.map(function (cd) {
-      var spec = cd.spec, flat = renderFlat(spec, ppm, cd.holes);
+      var spec = cd.spec, flat = renderFlat(spec, ppm, cd.holes, cs.look);
       var s = cd.scale, rot = cd.rot * Math.PI / 180, cr = Math.cos(rot), sr = Math.sin(rot);
       var corners = [[0, 0], [spec.W, 0], [spec.W, spec.H], [0, spec.H]];
       var dst = corners.map(function (p) {
@@ -123,12 +184,17 @@
         for (var ci = cards.length - 1; ci >= 0; ci--) {
           var C = cards[ci], P = apply(C.Hi, x + 0.5, y + 0.5), X = P[0], Y = P[1];
           if (X < 0 || Y < 0 || X > C.spec.W || Y > C.spec.H) continue;
-          var inHole = false;
+          var hit = 0, hh, dx, dy, r2;                 // 1 = opening (ondergrond zichtbaar), 2 = opgestuwd papier
           for (k = 0; k < C.cd.holes.length; k++) {
-            var hh = C.cd.holes[k];
-            if ((X - hh.X) * (X - hh.X) + (Y - hh.Y) * (Y - hh.Y) < hh.r * hh.r) { inHole = true; break; }
+            hh = C.cd.holes[k]; dx = X - hh.X; dy = Y - hh.Y; r2 = dx * dx + dy * dy;
+            if (!hh.torn) { if (r2 < hh.r * hh.r) { hit = 1; break; } continue; }
+            if (r2 > hh.rMax * hh.rMax || Math.sqrt(r2) >= tornRadius(hh, Math.atan2(dy, dx))) continue;
+            var ex = dx - hh.torn.ox, ey = dy - hh.torn.oy;
+            hit = ex * ex + ey * ey < hh.torn.or * hh.torn.or ? 1 : 2;
+            break;
           }
-          if (inHole) { col = cs.holeColor || bg; break; }
+          if (hit === 1) { col = cs.holeColor || bg; break; }
+          if (hit === 2) { col = flapColor(hh, dx, dy, cs.flap || [205, 180, 140]); break; }
           var fx = X * ppm - 0.5, fy = Y * ppm - 0.5, x0 = Math.max(0, Math.min(C.fw - 2, fx | 0)), y0 = Math.max(0, Math.min(C.fh - 2, fy | 0));
           var ax = fx - x0, ay = fy - y0, i0 = (y0 * C.fw + x0) * 4, i1 = i0 + C.fw * 4, fd = C.fd.data;
           col = [0, 0, 0];
@@ -193,7 +259,8 @@
   // De generator gebruikt pixelmiddens op x+0.5, de detector op x.
   function truthPx(H, X, Y) { var p = apply(H, X, Y); return [p[0] - 0.5, p[1] - 0.5]; }
 
-  function evaluate(photo, res) {
+  // keep (optioneel): hierin komen per gevonden schot de ruwe gegevens { row, vis, hole, truth } voor een plaatje.
+  function evaluate(photo, res, keep) {
     var rows = [], cardsOut = [];
     var allVis = [];
     res.cards.forEach(function (card, ci) { card.visuals.forEach(function (v) { allVis.push({ card: card, ci: ci, v: v }); }); });
@@ -213,14 +280,16 @@
             var p = KS.detect.mapPoint(vis.map, dh.u, dh.v), dist = Math.hypot(p.x - ph[0], p.y - ph[1]) / vis.pxPerMm;
             if (dist < bdist) { bdist = dist; bi = idx; }
           });
-          var row = { card: tci, vis: tv.l, label: vis.label, dTrue: +h.d.toFixed(2), tScore: KS.target.scoreShot(h.d, GAUGE).value };
+          var row = { card: tci, vis: tv.l, label: vis.label, dTrue: +h.d.toFixed(2), tScore: KS.target.scoreShot(h.d, GAUGE).value, ang: Math.round(h.ang * 180 / Math.PI) };
           if (bi !== null && bdist < 3) {
             used[bi] = true;
             var dh = vis.holes[bi], dd = Math.hypot(dh.u, dh.v);
-            row.dDet = +dd.toFixed(3); row.err = +bdist.toFixed(3); row.score = KS.target.scoreShot(dd, GAUGE).value;
+            row.dDet = +dd.toFixed(3); row.err = +bdist.toFixed(3); row.dErr = +(dd - h.d).toFixed(3); row.score = KS.target.scoreShot(dd, GAUGE).value;
             row.sigma = +dh.sigma.toFixed(3); row.z = +(Math.abs(dd - h.d) / dh.sigma).toFixed(2);
             row.cert = +KS.target.certainty(dd, dh.sigma, GAUGE, dh.pDetect).toFixed(3);
             row.conf = dh.conf; row.method = dh.method; row.resp = +dh.response.toFixed(2); row.cov = dh.coverage; row.fit = dh.fit;
+            row.rms = dh.rms === null ? null : +dh.rms.toFixed(3); row.inl = dh.inliers; row.rad = dh.radius === null ? null : +dh.radius.toFixed(2);
+            if (keep) keep.push({ row: row, vis: vis, hole: dh, truth: ph });
           } else row.missed = true;
           rows.push(row);
         });
@@ -265,7 +334,7 @@
 
   function prepare(cs) {
     var R = rng(cs.seed * 7 + 1);
-    cs.cards.forEach(function (cd) { cd.holes = cardHoles(R, cd.spec, cd.perVisual, cs.anyMargin); });
+    cs.cards.forEach(function (cd) { cd.holes = cardHoles(R, cd.spec, cd.perVisual, cs.anyMargin, cs.holes); });
     return cs;
   }
 
@@ -308,7 +377,8 @@
     document.title = 'DONE';
   }
 
-  window.KSynth = { rng: rng, makePhoto: makePhoto, cardHoles: cardHoles, bigCase: bigCase, smallGrid: smallGrid, prepare: prepare, loadJpeg: loadJpeg };
+  window.KSynth = { rng: rng, makePhoto: makePhoto, cardHoles: cardHoles, bigCase: bigCase, smallGrid: smallGrid, prepare: prepare, loadJpeg: loadJpeg,
+    toImageData: toImageData, evaluate: evaluate, GAUGE: GAUGE };
 
   window.addEventListener('load', function () {
     if (!document.getElementById('out')) return;

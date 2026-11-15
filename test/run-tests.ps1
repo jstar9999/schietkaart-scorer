@@ -28,6 +28,12 @@ $p = & $edge @common --dump-dom ((Url (Join-Path $test 'e2e.html')) + '?persist=
 $m = [regex]::Match($p, 'PERSIST \w+[^<]*?kaarten na herladen: \d+')
 if ($m.Success) { $m.Value } else { 'PERSIST: geen uitvoer' }
 
+# Schotmaat: gemeten waarde in de editor vastleggen
+$g = & $edge @common --dump-dom ((Url (Join-Path $test 'e2e.html')) + '?gauge=1') 2>$null | Out-String
+$m = [regex]::Match($g, 'GAUGE \w+[^<]*')
+if ($m.Success) { $m.Value.Trim() -replace '&gt;', '>' -replace '&quot;', '"' } else { 'GAUGE: geen uitvoer' }
+& $edge @common '--window-size=1100,900' "--screenshot=$(Join-Path $test 'screenshot-gauge.png')" ((Url (Join-Path $test 'e2e.html')) + '?gauge=1') 2>$null | Out-Null
+
 # Feedbackpakket: zip met foto's + serie.json, moet met .NET te openen zijn
 $f = & $edge @common --dump-dom ((Url (Join-Path $test 'e2e.html')) + '?feedback=1') 2>$null | Out-String
 $m = [regex]::Match($f, 'ZIP (\d+)\s+([A-Za-z0-9+/=]+)')
